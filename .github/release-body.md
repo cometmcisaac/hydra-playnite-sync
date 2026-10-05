@@ -22,6 +22,9 @@ handing achievement unlocks to the
   Unlocks are handed to Playnite Achievements under provider **Steam**
   (or **Manual** for non-Steam entries).
 - **Auto-detects the Hydra database** (`%APPDATA%\Hydra` and `%APPDATA%\hydralauncher`).
+- **Built-in update checks** — Hydra Sync checks GitHub Releases a couple of minutes after
+  startup (toggleable) and offers a one-click **Download & install update** from the
+  `@Hydra Sync` main menu; Playnite then runs its normal confirm-and-restart flow.
 - Main-menu **Sync now**, a background timer, and a per-game
   **Diagnose achievement sync…** tool for troubleshooting.
 

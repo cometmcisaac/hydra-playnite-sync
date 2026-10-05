@@ -1,0 +1,28 @@
+# Prepared submission for the official Playnite Add-on Database
+# (https://github.com/JosefNemec/PlayniteAddonDatabase).
+#
+# New plugin submissions are currently ON HOLD per that repository's README, so this
+# file is kept ready but not yet submitted. When submissions reopen, add it as
+# addons/generic/McIsaac_HydraSync.yaml (web "Propose new file" or fork + PR).
+# Only once it is merged will Hydra Sync appear in Playnite's Add-ons -> Browse list
+# and receive updates through Add-ons -> Updates.
+AddonId: A76358E9-BFA2-4189-B6F3-2307EA4E217B
+Type: Generic
+Name: Hydra Sync
+Author: Caden McIsaac
+ShortDescription: Syncs playtime and achievements between Hydra Launcher and Playnite.
+InstallerManifestUrl: https://raw.githubusercontent.com/cometmcisaac/hydra-playnite-sync/main/InstallerManifest.yaml
+SourceUrl: https://github.com/cometmcisaac/hydra-playnite-sync
+Description: >
+  Synchronizes playtime and achievement unlocks between Hydra Launcher and Playnite.
+  Playtime uses a replace-if-larger rule (Hydra's total replaces Playnite's value only
+  when it is higher) with a one-click undo. Achievement unlock files are read from disk
+  and exported to the Playnite Achievements extension, with names, descriptions and
+  icons taken from local Steam schema files, an optional Steam Web API key, or the
+  Steam store API. The Hydra database location is auto-detected, the library is matched
+  to existing Playnite games only, and the extension includes background sync,
+  a manual Sync now action, and achievement diagnostics.
+IconUrl: https://raw.githubusercontent.com/cometmcisaac/hydra-playnite-sync/main/src/HydraSync/icon.png
+Links:
+  GitHub: https://github.com/cometmcisaac/hydra-playnite-sync
+  Issues Tracker: https://github.com/cometmcisaac/hydra-playnite-sync/issues

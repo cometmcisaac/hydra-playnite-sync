@@ -24,6 +24,8 @@ namespace HydraSync
                 "Export achievements to Playnite Achievements (imports on Playnite restart)"));
             panel.Children.Add(Check(nameof(PluginSettings.FetchSteamSchema),
                 "Fetch achievement names/descriptions from Steam"));
+            panel.Children.Add(Check(nameof(PluginSettings.CheckForUpdates),
+                "Check for Hydra Sync updates at startup (GitHub releases)"));
 
             panel.Children.Add(Row("Sync interval (minutes):", NumberBox()));
             panel.Children.Add(Row("Hydra data folder:", DataDirBox()));

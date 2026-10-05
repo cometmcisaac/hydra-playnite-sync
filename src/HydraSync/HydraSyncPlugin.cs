@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -8,6 +9,7 @@ using System.Windows.Controls;
 using HydraSync.Achievements;
 using HydraSync.Hydra;
 using HydraSync.Sync;
+using HydraSync.Update;
 using Playnite.SDK;
 using Playnite.SDK.Events;
 using Playnite.SDK.Models;
@@ -37,6 +39,8 @@ namespace HydraSync
         private int _syncRunning;
         private bool _paWarned;
         private ILogger _log;
+        private UpdateCheckResult _availableUpdate;
+        private CancellationTokenSource _updateCts;
 
         private string StatePath => Path.Combine(GetPluginUserDataPath(), "sync_state.json");
         private string SchemaCacheDir => Path.Combine(GetPluginUserDataPath(), "steam_schema_cache");
@@ -57,12 +61,20 @@ namespace HydraSync
             _uiContext = SynchronizationContext.Current;
             _state = SyncState.Load(StatePath);
             ScheduleTimer();
+
+            _updateCts = new CancellationTokenSource();
+            if (Settings == null || Settings.CheckForUpdates)
+            {
+                ScheduleUpdateCheck(_updateCts.Token);
+            }
         }
 
         public override void OnApplicationStopped(OnApplicationStoppedEventArgs args)
         {
             _timer?.Dispose();
             _timer = null;
+            _updateCts?.Cancel();
+            _updateCts = null;
         }
 
         public override ISettings GetSettings(bool firstRunSettings) => Settings;
@@ -78,6 +90,18 @@ namespace HydraSync
                 Icon = "sync",
                 Action = _ => StartSync(true),
             };
+
+            var update = _availableUpdate;
+            if (update != null && update.UpdateAvailable)
+            {
+                yield return new MainMenuItem
+                {
+                    Description = "Download & install update (" + update.LatestVersion + ")…",
+                    MenuSection = "@Hydra Sync",
+                    Icon = "download",
+                    Action = _ => InstallUpdate(update),
+                };
+            }
         }
 
         public override IEnumerable<GameMenuItem> GetGameMenuItems(GetGameMenuItemsArgs args)
@@ -245,6 +269,74 @@ namespace HydraSync
             // First pass shortly after Playnite starts, then every interval.
             _timer = new Timer(_ => StartSync(false), null,
                 TimeSpan.FromSeconds(20), TimeSpan.FromMinutes(minutes));
+        }
+
+        /// <summary>
+        /// Checks GitHub for a newer release a couple of minutes after startup so a
+        /// network hiccup at launch never blocks anything. One call per session.
+        /// </summary>
+        private void ScheduleUpdateCheck(CancellationToken token)
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMinutes(2), token);
+                    if (token.IsCancellationRequested) return;
+
+                    var result = await UpdateChecker.CheckAsync();
+                    if (token.IsCancellationRequested || !result.UpdateAvailable) return;
+
+                    _availableUpdate = result;
+                    Notify("hydrasync-update",
+                        $"Hydra Sync {result.LatestVersion} is available (installed: {result.CurrentVersion}). " +
+                        "Use Main menu → @Hydra Sync → Download & install update to get it.",
+                        NotificationType.Info);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Plugin stopped while the check was pending.
+                }
+                catch (Exception ex)
+                {
+                    _log?.Debug("HydraSync: update check failed: " + ex.Message);
+                }
+            }, token);
+        }
+
+        /// <summary>
+        /// Downloads the release .pext and opens it. Playnite's .pext file association
+        /// routes the file to the running instance, which asks the user to confirm the
+        /// update and queues it for the normal restart flow.
+        /// </summary>
+        private void InstallUpdate(UpdateCheckResult update)
+        {
+            var latest = update.LatestVersion;
+            Task.Run(async () =>
+            {
+                try
+                {
+                    var tempFile = Path.Combine(Path.GetTempPath(), $"HydraSync-{latest}.pext");
+                    await UpdateChecker.DownloadAsync(update.DownloadUrl, tempFile);
+
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = tempFile,
+                        UseShellExecute = true,
+                    });
+
+                    Notify("hydrasync-update-run",
+                        $"Downloaded Hydra Sync {latest}. Playnite will ask to confirm the update - " +
+                        "answer Yes, then restart when prompted so the new version is installed.",
+                        NotificationType.Info);
+                }
+                catch (Exception ex)
+                {
+                    _log?.Error(ex, "HydraSync: update download failed");
+                    Notify("hydrasync-update-error",
+                        "Hydra Sync update download failed: " + ex.Message, NotificationType.Error);
+                }
+            });
         }
 
         private async Task RunSyncAsync(bool notifyUser)

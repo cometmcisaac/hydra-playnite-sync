@@ -6,7 +6,7 @@ achievement unlocks into the **Playnite Achievements** extension (justin-delano/
 
 - Extension ID: `A76358E9-BFA2-4189-B6F3-2307EA4E217B`
 - Type: Generic plugin · Target: Playnite 10.x (SDK 6.18) · .NET Framework 4.8
-- Package: `dist/HydraSync-1.4.1.pext`
+- Package: `dist/HydraSync-1.5.0.pext`
 
 ## What it does
 
@@ -19,6 +19,7 @@ achievement unlocks into the **Playnite Achievements** extension (justin-delano/
 | Playnite Achievements hand-off | Writes per-game JSON to PA's `achievement_cache` folder inside its plugin data dir (`%APPDATA%\Playnite\ExtensionsData\e6aad2c9-6e06-4d8d-ac55-ac3b252b5f7b\achievement_cache\<game-guid>.json` — Playnite keys plugin data by the plugin's class GUID, not its manifest name; the folder is auto-detected with fallbacks). PA's legacy-cache importer picks these up **on the next Playnite start** and then deletes the file. Steam-game writes use ProviderKey `Steam` — PA shows a proper Steam source label (name + provider icon/color) while unlock state comes from Hydra; **non-Steam games use ProviderKey `Manual`** — that's PA's own manual-achievements provider key, so PA keeps its manual-tracking features available for those games instead of treating them as owned by another provider. Display in PA is provider-agnostic (data is read by game GUID), so unlocks show up regardless of how the game was added. |
 | Matching | Strong: Playnite `GameId` == Hydra `objectId` (Steam AppID). Fallback: normalized title equality (case-insensitive, symbols stripped). |
 | Scope | **Sync existing games only** — Hydra-only games are not imported; unmatched Hydra entries are skipped. |
+| Updates | Checks the repo's GitHub Releases ~2 minutes after Playnite starts (toggle) and offers a one-click **Download & install update** from the `@Hydra Sync` main menu — Playnite then runs its normal confirm + restart flow. |
 
 ## Requirements
 
@@ -32,12 +33,12 @@ achievement unlocks into the **Playnite Achievements** extension (justin-delano/
 ## Install
 
 **Option A — package:**
-grab `HydraSync-1.4.1.pext` from this repo's **Releases** page (or build it yourself with
+grab `HydraSync-1.5.0.pext` from this repo's **Releases** page (or build it yourself with
 `scripts/package.sh`) and double-click it (Playnite must be installed; it registers the
 `.pext` file association). Playnite verifies and installs the extension automatically.
 
 **Option B — manual:**
-extract the contents of the `HydraSync-1.4.1.pext` package (a plain zip) into
+extract the contents of the `HydraSync-1.5.0.pext` package (a plain zip) into
 
 ```
 %APPDATA%\Playnite\Extensions\A76358E9-BFA2-4189-B6F3-2307EA4E217B\
@@ -63,6 +64,7 @@ so that `extension.yaml` sits directly in that folder. Restart Playnite.
 | Steam Web API key (optional) | *(empty)* | Full achievement schemas (names, descriptions, icons) via `ISteamUserStats/GetSchemaForGame`. Get a key at `steamcommunity.com/dev/apikey`. When empty, metadata falls back to local definition files, then the public store API (which no longer returns achievements for newer games). |
 | Sync interval (minutes) | 15 | Background timer period (1–1440). |
 | Hydra data directory | *(empty)* | Auto-detects `%APPDATA%\Hydra\hydra-db`, `%APPDATA%\hydralauncher\hydra-db` (older builds), `-staging` variants, or a direct-DB folder (accepted: the `hydra-db` folder itself or its parent). Set explicitly for portable Hydra installs. |
+| Check for Hydra Sync updates at startup | on | Query GitHub Releases ~2 minutes after Playnite starts and notify when a newer version is available. |
 
 **Sync now** and **Undo playtime changes…** are available from the extension's settings
 panel; **Sync now** is also in the Playnite main menu (`@Hydra Sync`) and on a game's
@@ -80,6 +82,23 @@ its original playtime — exact for games synced by v1.2+, recovered approximate
 games synced by the older additive builds (their recorded bookkeeping is subtracted).
 Achievements are never touched, and the playtime bookkeeping is cleared so the next sync
 re-applies the replace-if-larger rule from a clean slate.
+
+## Updates
+
+Hydra Sync checks this repo's **GitHub Releases** about two minutes after Playnite starts
+(toggle: *Check for Hydra Sync updates at startup*). When a newer version exists you get a
+notification, and **Main menu → @Hydra Sync → Download & install update (vX.Y.Z)…**
+downloads the `.pext` and hands it to Playnite, which shows its usual
+"update from X to Y?" confirmation followed by the restart prompt.
+
+> **Official Add-ons catalog status:** Playnite's *Add-ons → Browse* / *Updates* listing
+> only covers add-ons submitted to
+> [JosefNemec/PlayniteAddonDatabase](https://github.com/JosefNemec/PlayniteAddonDatabase),
+> and that repository currently has **new plugin submissions on hold** while the database
+> is being rebuilt for Playnite 11. This repo is prepared for submission:
+> `InstallerManifest.yaml` (kept current by CI on every release) and
+> `PlayniteAddonDatabase-HydraSync.yaml` (the ready-to-file catalog entry). Until the hold
+> lifts, the in-extension updater above is the update mechanism.
 
 ## How it works
 
@@ -139,6 +158,7 @@ src/HydraSync/
   Hydra/                    # LevelDB reader, game model, achievement file locator + parsers
   Achievements/             # Steam schema client, PA cache writer
   Sync/                     # sync engine + persisted state
+  Update/                   # GitHub release update checker
 ```
 
 Unit/integration checks for the Hydra layer (LevelDB fixture + every achievement parser
@@ -168,7 +188,7 @@ at Debug level in `%APPDATA%\Playnite\logs\Playnite.log` (search `HydraSync`).
 ## Windows test checklist
 
 1. **Load** — install the `.pext`, start Playnite. Check
-   `Add-ons → Extensions settings → Generic` shows *Hydra Sync* (v1.4.1) with no error banner, and
+   `Add-ons → Extensions settings → Generic` shows *Hydra Sync* (v1.5.0) with no error banner, and
    `%APPDATA%\Playnite\logs\Playnite.log` contains no `HydraSync` errors
    (search for `HydraSync`).
 2. **Settings** — open the extension's settings; verify all toggles/fields render and

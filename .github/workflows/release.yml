@@ -79,3 +79,44 @@ jobs:
           files: dist/*.pext
           body_path: .github/release-body.md
           generate_release_notes: true
+
+      - name: Record release in InstallerManifest on main
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout -B main origin/main
+          $file = "InstallerManifest.yaml"
+          if (-not (Test-Path $file)) {
+            "AddonId: A76358E9-BFA2-4189-B6F3-2307EA4E217B`nPackages:" | Set-Content $file -NoNewline
+          }
+          $text = Get-Content $file -Raw
+          $escaped = [regex]::Escape($version)
+          if ($text -match "(?m)^\s*-\s+Version:\s+$escaped\s*$") {
+            Write-Host "InstallerManifest already records $version - nothing to do."
+            exit 0
+          }
+          $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd")
+          $nl = "`n"
+          $entry =
+            "  - Version: $version" + $nl +
+            "    RequiredApiVersion: 6.0" + $nl +
+            "    ReleaseDate: $date" + $nl +
+            "    PackageUrl: https://github.com/cometmcisaac/hydra-playnite-sync/releases/download/v$version/HydraSync-$version.pext" + $nl +
+            "    Changelog:" + $nl +
+            "    - `"See https://github.com/cometmcisaac/hydra-playnite-sync/releases/tag/v$version for details.`"" + $nl
+          $idx = $text.IndexOf("Packages:")
+          if ($idx -lt 0) { throw "InstallerManifest.yaml has no Packages: section" }
+          $nlIdx = $text.IndexOf($nl, $idx)
+          if ($nlIdx -lt 0) { $text = $text + $nl + $entry }
+          else { $text = $text.Substring(0, $nlIdx + 1) + $entry + $text.Substring($nlIdx + 1) }
+          Set-Content -Path $file -Value $text -NoNewline
+          git add $file
+          if (git diff --cached --quiet) {
+            Write-Host "No manifest changes."
+            exit 0
+          }
+          git commit -m "ci: record release v$version in InstallerManifest"
+          git push origin main

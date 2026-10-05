@@ -50,6 +50,12 @@ namespace HydraSync
         /// </summary>
         public string SteamWebApiKey { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Check the project's GitHub releases shortly after Playnite starts and offer
+        /// one-click download/install when a newer version is out.
+        /// </summary>
+        public bool CheckForUpdates { get; set; } = true;
+
         public PluginSettings GetClone()
         {
             return (PluginSettings)MemberwiseClone();
@@ -88,6 +94,7 @@ namespace HydraSync
             current.HydraDataDir = _backup.HydraDataDir;
             current.FetchSteamSchema = _backup.FetchSteamSchema;
             current.SteamWebApiKey = _backup.SteamWebApiKey;
+            current.CheckForUpdates = _backup.CheckForUpdates;
         }
 
         public void EndEdit()
