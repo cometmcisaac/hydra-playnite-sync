@@ -35,6 +35,19 @@ namespace HydraSync.Sync
             achievements = globalAchievements && mode != GameSyncMode.PlaytimeOnly;
         }
 
+        /// <summary>
+        /// Resolves a one-shot, explicitly requested sync (the game context menu
+        /// "Sync playtime now" / "Sync achievements now" / "Sync … now" actions).
+        /// An explicit request always runs - global switches and the stored per-game
+        /// override are deliberately ignored, because the user just asked for exactly
+        /// this scope.
+        /// </summary>
+        public static void ResolveForced(GameSyncMode mode, out bool playtime, out bool achievements)
+        {
+            playtime = mode != GameSyncMode.AchievementsOnly;
+            achievements = mode != GameSyncMode.PlaytimeOnly;
+        }
+
         public static string Describe(GameSyncMode mode)
         {
             switch (mode)

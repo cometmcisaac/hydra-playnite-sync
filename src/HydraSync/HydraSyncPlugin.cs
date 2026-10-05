@@ -106,13 +106,58 @@ namespace HydraSync
 
         public override IEnumerable<GameMenuItem> GetGameMenuItems(GetGameMenuItemsArgs args)
         {
+            var selected = args != null && args.Games != null ? args.Games : new List<Game>();
+            var selectionLabel = selected.Count == 1
+                ? $"\"{selected[0].Name}\""
+                : $"{selected.Count} selected games";
+
+            // Immediate one-shot syncs: clicking these syncs right now, for the selected
+            // game(s) only, with exactly the requested scope.
             yield return new GameMenuItem
             {
-                Description = "Sync Hydra playtime & achievements",
+                Description = "Sync playtime now",
                 MenuSection = "Hydra Sync",
                 Icon = "sync",
-                Action = _ => StartSync(true),
+                Action = a => SyncSelected(a.Games, GameSyncMode.PlaytimeOnly, selectionLabel),
             };
+            yield return new GameMenuItem
+            {
+                Description = "Sync achievements now",
+                MenuSection = "Hydra Sync",
+                Icon = "sync",
+                Action = a => SyncSelected(a.Games, GameSyncMode.AchievementsOnly, selectionLabel),
+            };
+            yield return new GameMenuItem
+            {
+                Description = "Sync playtime & achievements now",
+                MenuSection = "Hydra Sync",
+                Icon = "sync",
+                Action = a => SyncSelected(a.Games, GameSyncMode.Both, selectionLabel),
+            };
+
+            // Persistent per-game mode: what future full/auto syncs do with this game.
+            // Playnite's SDK has no sub-menu support, so the three modes are separate
+            // items and the active one is labelled "(current)".
+            var currentMode = SelectedMode(selected);
+            yield return new GameMenuItem
+            {
+                Description = ModeDescription("Always sync: playtime and achievements", GameSyncMode.Both, currentMode),
+                MenuSection = "Hydra Sync",
+                Action = a => SetGameMode(a.Games, GameSyncMode.Both),
+            };
+            yield return new GameMenuItem
+            {
+                Description = ModeDescription("Always sync: playtime only", GameSyncMode.PlaytimeOnly, currentMode),
+                MenuSection = "Hydra Sync",
+                Action = a => SetGameMode(a.Games, GameSyncMode.PlaytimeOnly),
+            };
+            yield return new GameMenuItem
+            {
+                Description = ModeDescription("Always sync: achievements only", GameSyncMode.AchievementsOnly, currentMode),
+                MenuSection = "Hydra Sync",
+                Action = a => SetGameMode(a.Games, GameSyncMode.AchievementsOnly),
+            };
+
             yield return new GameMenuItem
             {
                 Description = "Diagnose achievement sync…",
@@ -123,29 +168,93 @@ namespace HydraSync
                     if (game != null) DiagnoseAchievements(game);
                 },
             };
+        }
 
-            // Per-game sync modes. Playnite's SDK has no sub-menu support, so the three
-            // modes are separate items and the active one is labelled "(current)".
-            var selected = args != null && args.Games != null ? args.Games : new List<Game>();
-            var currentMode = SelectedMode(selected);
-            yield return new GameMenuItem
+        /// <summary>
+        /// Runs a one-shot sync for just the selected games with the requested scope.
+        /// Explicit requests bypass the global switches and the stored per-game mode,
+        /// because the user clicked this exact action.
+        /// </summary>
+        internal void SyncSelected(List<Game> games, GameSyncMode mode, string selectionLabel)
+        {
+            var ids = new List<Guid>();
+            if (games != null)
             {
-                Description = ModeDescription("Sync both playtime and achievements", GameSyncMode.Both, currentMode),
-                MenuSection = "Hydra Sync",
-                Action = a => SetGameMode(a.Games, GameSyncMode.Both),
-            };
-            yield return new GameMenuItem
+                foreach (var game in games)
+                {
+                    if (game != null) ids.Add(game.Id);
+                }
+            }
+
+            if (ids.Count == 0) return;
+
+            if (Interlocked.CompareExchange(ref _syncRunning, 1, 0) != 0)
             {
-                Description = ModeDescription("Sync playtime only", GameSyncMode.PlaytimeOnly, currentMode),
-                MenuSection = "Hydra Sync",
-                Action = a => SetGameMode(a.Games, GameSyncMode.PlaytimeOnly),
-            };
-            yield return new GameMenuItem
+                Notify(
+                    "hydrasync-busy",
+                    "Hydra Sync: a sync is already running - try again in a moment.",
+                    NotificationType.Error);
+                return;
+            }
+
+            var label = GameSyncModeLogic.Describe(mode);
+            Task.Run(() => RunSelectedSyncAsync(ids, mode, label, selectionLabel));
+        }
+
+        private async Task RunSelectedSyncAsync(
+            List<Guid> ids,
+            GameSyncMode mode,
+            string label,
+            string selectionLabel)
+        {
+            try
             {
-                Description = ModeDescription("Sync achievements only", GameSyncMode.AchievementsOnly, currentMode),
-                MenuSection = "Hydra Sync",
-                Action = a => SetGameMode(a.Games, GameSyncMode.AchievementsOnly),
-            };
+                if (_state == null) _state = SyncState.Load(StatePath);
+
+                var engine = new SyncEngine(
+                    PlayniteApi, Settings, _state, StatePath, SchemaCacheDir,
+                    ResolveHydraDbPath, _log, RunOnUi);
+                var summary = await engine.RunAsync(ids, mode);
+
+                if (summary.Error != null)
+                {
+                    Notify("hydrasync-error", "Hydra Sync failed: " + summary.Error, NotificationType.Error);
+                }
+                else if (!summary.HydraDbFound)
+                {
+                    Notify(
+                        "hydrasync-nodb",
+                        $"Hydra database not found at \"{ResolveHydraDbPath()}\". Is Hydra installed? " +
+                        "You can point Hydra Sync at a custom location in extension settings.",
+                        NotificationType.Error);
+                }
+                else if (summary.Matched == 0)
+                {
+                    Notify(
+                        "hydrasync-nomatch",
+                        $"Hydra Sync: no Hydra match for {selectionLabel} ({label}) - nothing was synced. " +
+                        "Use Diagnose achievement sync on the game to see what was found.",
+                        NotificationType.Error);
+                }
+                else
+                {
+                    Notify(
+                        "hydrasync-done-selected",
+                        $"Hydra Sync ({label}): {selectionLabel} - raised playtime on " +
+                        $"{summary.PlaytimeRaisedCount} game(s) (+{FormatMinutes(summary.PlaytimeAddedSeconds)}), " +
+                        $"{summary.AchievementsWritten} achievement set(s) updated.",
+                        NotificationType.Info);
+                }
+            }
+            catch (Exception ex)
+            {
+                _log?.Error(ex, "HydraSync: selected sync failed");
+                Notify("hydrasync-error", "Hydra Sync failed: " + ex.Message, NotificationType.Error);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _syncRunning, 0);
+            }
         }
 
         private static string ModeDescription(string text, GameSyncMode mode, GameSyncMode current)

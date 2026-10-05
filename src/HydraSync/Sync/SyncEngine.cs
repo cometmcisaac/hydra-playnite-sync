@@ -69,7 +69,18 @@ namespace HydraSync.Sync
             _runOnUi = runOnUi;
         }
 
-        public async Task<SyncSummary> RunAsync()
+        /// <param name="restrictToGames">
+        /// When set, only these Playnite games are synced (one-shot "Sync … now" actions
+        /// from a game's context menu). Full syncs pass null.
+        /// </param>
+        /// <param name="forcedMode">
+        /// When set, the requested scope runs regardless of the global switches and the
+        /// stored per-game override, and the skip counters stay at zero (nothing was
+        /// skipped - the user asked for exactly this). Null = normal per-game mode handling.
+        /// </param>
+        public async Task<SyncSummary> RunAsync(
+            ICollection<Guid> restrictToGames = null,
+            GameSyncMode? forcedMode = null)
         {
             var summary = new SyncSummary();
 
@@ -93,28 +104,40 @@ namespace HydraSync.Sync
                 {
                     var game = index.Match(h);
                     if (game == null) continue;
+                    if (restrictToGames != null && !restrictToGames.Contains(game.Id)) continue;
 
                     summary.Matched++;
                     matched.Add(new KeyValuePair<HydraGame, Game>(h, game));
 
-                    var mode = _state.GetGameMode(game.Id);
-                    GameSyncModeLogic.Resolve(
-                        _settings.SyncPlaytime, _settings.SyncAchievements, mode,
-                        out var doPlaytime, out var doAchievements);
+                    bool doPlaytime;
+                    bool doAchievements;
+                    if (forcedMode.HasValue)
+                    {
+                        GameSyncModeLogic.ResolveForced(
+                            forcedMode.Value, out doPlaytime, out doAchievements);
+                    }
+                    else
+                    {
+                        var mode = _state.GetGameMode(game.Id);
+                        GameSyncModeLogic.Resolve(
+                            _settings.SyncPlaytime, _settings.SyncAchievements, mode,
+                            out doPlaytime, out doAchievements);
+
+                        if (!doPlaytime && _settings.SyncPlaytime)
+                        {
+                            // Global switch is on, this game is set to achievements-only.
+                            summary.PlaytimeSkipped++;
+                        }
+
+                        if (!doAchievements && _settings.SyncAchievements)
+                        {
+                            summary.AchievementsSkipped++;
+                        }
+                    }
 
                     if (doPlaytime)
                     {
                         ApplyPlaytime(h, game, changed, summary);
-                    }
-                    else if (_settings.SyncPlaytime)
-                    {
-                        // Global switch is on, this game is set to achievements-only.
-                        summary.PlaytimeSkipped++;
-                    }
-
-                    if (!doAchievements && _settings.SyncAchievements)
-                    {
-                        summary.AchievementsSkipped++;
                     }
                 }
 
@@ -128,10 +151,20 @@ namespace HydraSync.Sync
                 {
                     foreach (var pair in matched)
                     {
-                        GameSyncModeLogic.Resolve(
-                            _settings.SyncPlaytime, _settings.SyncAchievements,
-                            _state.GetGameMode(pair.Value.Id),
-                            out _, out var doAchievements);
+                        bool doAchievements;
+                        if (forcedMode.HasValue)
+                        {
+                            GameSyncModeLogic.ResolveForced(
+                                forcedMode.Value, out _, out doAchievements);
+                        }
+                        else
+                        {
+                            GameSyncModeLogic.Resolve(
+                                _settings.SyncPlaytime, _settings.SyncAchievements,
+                                _state.GetGameMode(pair.Value.Id),
+                                out _, out doAchievements);
+                        }
+
                         if (!doAchievements) continue;
 
                         await ProcessAchievementsAsync(pair.Key, pair.Value, summary);

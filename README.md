@@ -6,7 +6,7 @@ achievement unlocks into the **Playnite Achievements** extension (justin-delano/
 
 - Extension ID: `A76358E9-BFA2-4189-B6F3-2307EA4E217B`
 - Type: Generic plugin · Target: Playnite 10.x (SDK 6.18) · .NET Framework 4.8
-- Package: `dist/HydraSync-1.7.0.pext`
+- Package: `dist/HydraSync-1.8.0.pext`
 
 ## What it does
 
@@ -19,7 +19,7 @@ achievement unlocks into the **Playnite Achievements** extension (justin-delano/
 | Playnite Achievements hand-off | Writes per-game JSON to PA's `achievement_cache` folder inside its plugin data dir (`%APPDATA%\Playnite\ExtensionsData\e6aad2c9-6e06-4d8d-ac55-ac3b252b5f7b\achievement_cache\<game-guid>.json` — Playnite keys plugin data by the plugin's class GUID, not its manifest name; the folder is auto-detected with fallbacks). PA's legacy-cache importer picks these up **on the next Playnite start** and then deletes the file. Steam-game writes use ProviderKey `Steam` — PA shows a proper Steam source label (name + provider icon/color) while unlock state comes from Hydra; **non-Steam games use ProviderKey `Manual`** — that's PA's own manual-achievements provider key, so PA keeps its manual-tracking features available for those games instead of treating them as owned by another provider. Display in PA is provider-agnostic (data is read by game GUID), so unlocks show up regardless of how the game was added. |
 | Matching | Strong: Playnite `GameId` == Hydra `objectId` (Steam AppID). Fallback: normalized title equality (case-insensitive, symbols stripped). |
 | Auto-sync | **Off by default.** Enable it in the extension settings to sync automatically ~20 s after Playnite starts and then once per interval (default 15 min). Saving settings applies immediately — no restart needed. While disabled, syncing only runs on demand via **Sync now**. |
-| Per-game sync modes | Every game can be set to sync **both**, **playtime only**, or **achievements only** via the game's context menu (`Hydra Sync` → …). Stored per game; the global switches remain master switches. |
+| Per-game sync | The game context menu syncs a single game (or a multi-selection) **immediately** — playtime, achievements, or both in one click, ignoring the global switches. Separate `Always sync: …` items store a per-game mode that narrower parts apply on their own. |
 | Scope | **Sync existing games only** — Hydra-only games are not imported; unmatched Hydra entries are skipped. |
 | Updates | Checks the repo's GitHub Releases ~2 minutes after Playnite starts (toggle) and offers a one-click **Download & install update** from the `@Hydra Sync` main menu — Playnite then runs its normal confirm + restart flow. |
 
@@ -35,12 +35,12 @@ achievement unlocks into the **Playnite Achievements** extension (justin-delano/
 ## Install
 
 **Option A — package:**
-grab `HydraSync-1.7.0.pext` from this repo's **Releases** page (or build it yourself with
+grab `HydraSync-1.8.0.pext` from this repo's **Releases** page (or build it yourself with
 `scripts/package.sh`) and double-click it (Playnite must be installed; it registers the
 `.pext` file association). Playnite verifies and installs the extension automatically.
 
 **Option B — manual:**
-extract the contents of the `HydraSync-1.7.0.pext` package (a plain zip) into
+extract the contents of the `HydraSync-1.8.0.pext` package (a plain zip) into
 
 ```
 %APPDATA%\Playnite\Extensions\A76358E9-BFA2-4189-B6F3-2307EA4E217B\
@@ -81,20 +81,34 @@ whether a Steam Web API key is set, every achievement file found
 (paths), unlocks parsed, whether a cache file is awaiting PA import, quarantine status,
 the per-game sync mode, and PA folder availability. Use it whenever unlocks don't appear.
 
-**Per-game sync modes** — right-click any game (or a multi-selection) →
-`Hydra Sync` and pick what that game syncs:
+**Per-game sync** — right-click any game (or multi-select several) → `Hydra Sync`:
 
-| Menu item | Effect for the selected game(s) |
+*Sync now (one-shot, runs immediately for the selected games):*
+
+| Menu item | What it does |
 |---|---|
-| `Sync both playtime and achievements` | Playtime **and** achievements (default; also clears a previous override) |
-| `Sync playtime only` | Only playtime is synced/updated for those games |
-| `Sync achievements only` | Only achievements are synced/updated for those games |
+| `Sync playtime now` | Reads Hydra for these games and updates playtime right away |
+| `Sync achievements now` | Reads achievement files for these games and hands unlocks to Playnite Achievements right away |
+| `Sync playtime & achievements now` | Both of the above in a single pass |
 
-The active mode is labelled **`(current)`** in the menu, and the sync notification
-mentions how many games were skipped because of it. Modes are stored per game in
-`sync_state.json` and survive restarts. The global **Sync playtime** / **Sync
-achievements** switches still apply on top: a per-game mode can only narrow what happens,
-never re-enable something you switched off globally.
+These one-shot actions work regardless of the global **Sync playtime** / **Sync
+achievements** switches and regardless of any stored per-game mode — you asked for that
+game, so it happens. They only touch the selected games, and a completion notification
+reports what changed (or says when no Hydra match was found).
+
+*Always sync (stored mode used by automatic and full-library passes):*
+
+| Menu item | Stored mode |
+|---|---|
+| `Always sync: playtime and achievements` | Both (default; also clears an override) |
+| `Always sync: playtime only` | Playtime only for this game |
+| `Always sync: achievements only` | Achievements only for this game |
+
+The active mode is labelled **`(current)`**. Stored modes are kept per game in
+`sync_state.json` (they survive restarts) and apply to the automatic passes and to
+`Sync now` from the main menu. The global switches remain master switches here: a stored
+mode can only narrow what happens, never re-enable something switched off globally. The
+main menu (`@Hydra Sync → Sync now`) still syncs the whole library.
 
 **Undo playtime changes** (with confirmation): restores every game the plugin modified to
 its original playtime — exact for games synced by v1.2+, recovered approximately for
@@ -224,7 +238,7 @@ at Debug level in `%APPDATA%\Playnite\logs\Playnite.log` (search `HydraSync`).
 ## Windows test checklist
 
 1. **Load** — install the `.pext`, start Playnite. Check
-   `Add-ons → Extensions settings → Generic` shows *Hydra Sync* (v1.7.0) with no error banner, and
+   `Add-ons → Extensions settings → Generic` shows *Hydra Sync* (v1.8.0) with no error banner, and
    `%APPDATA%\Playnite\logs\Playnite.log` contains no `HydraSync` errors
    (search for `HydraSync`).
 2. **Settings** — open the extension's settings; verify all toggles/fields render and
@@ -235,11 +249,15 @@ at Debug level in `%APPDATA%\Playnite\logs\Playnite.log` (search `HydraSync`).
 2c. **Auto-sync on** — enable Auto-sync (interval 1 min), save; the next timer pass should
    fire without a Playnite restart (allow up to ~1 min). Disabling it and saving should stop
    further automatic passes.
-2d. **Per-game modes** — right-click a synced game → `Hydra Sync` → `Sync playtime only`,
-    then sync: playtime still updates while achievements stay untouched (the notification
-    notes the skipped achievements). Switch to `Sync achievements only` and confirm the
-    reverse. Pick `Sync both playtime and achievements` to clear the override — the
-    `(current)` label follows the selection and multi-selections apply to every game.
+2d. **Per-game sync** — right-click a synced game → `Hydra Sync` → `Sync playtime now`:
+    playtime updates for that game only, with a completion notification. Then
+    `Sync achievements now` and confirm only achievements changed. With **Auto-sync off**
+    and the global **Sync achievements** switch off, `Sync achievements now` should still
+    do its work (one-shot actions ignore the switches). Finally check the stored modes:
+    `Always sync: playtime only` moves the `(current)` label, a later `Sync now` from the
+    main menu leaves that game's achievements alone and says how many were skipped, and
+    `Always sync: playtime and achievements` clears the override. Multi-selections apply
+    to every selected game.
 3. **Manual sync** — main menu `@Hydra Sync → Sync now`. Expect a completion notification
    (`Hydra Sync: … matched …, raised playtime on N game(s) (+X min), …`) or a "Hydra
    database not found" notification when Hydra has never run. Verify detection works with
