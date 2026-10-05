@@ -27,6 +27,8 @@ namespace HydraSync
             panel.Children.Add(Check(nameof(PluginSettings.CheckForUpdates),
                 "Check for Hydra Sync updates at startup (GitHub releases)"));
 
+            panel.Children.Add(Check(nameof(PluginSettings.AutoSync),
+                "Auto-sync (once shortly after Playnite starts, then on the interval below)"));
             panel.Children.Add(Row("Sync interval (minutes):", NumberBox()));
             panel.Children.Add(Row("Hydra data folder:", DataDirBox()));
             panel.Children.Add(Row("Steam Web API key (optional):", WebApiKeyBox()));
@@ -40,7 +42,9 @@ namespace HydraSync
                 Text =
                     "Leave the Hydra data folder empty to auto-detect %APPDATA%\\Hydra\\hydra-db or %APPDATA%\\hydralauncher\\hydra-db. " +
                     "Only games already in your Playnite library are matched - Hydra-only titles are never imported. " +
-                    "Playtime is never added on top: Hydra's total only replaces Playnite's value when it is higher.",
+                    "Playtime is never added on top: Hydra's total only replaces Playnite's value when it is higher. " +
+                    "Auto-sync is off by default - until you enable it, syncing only runs when you pick " +
+                    "\"Sync now\" from the @Hydra Sync menu.",
             };
             panel.Children.Add(note);
 

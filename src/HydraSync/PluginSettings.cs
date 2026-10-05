@@ -30,6 +30,14 @@ namespace HydraSync
         public bool SyncPlaytime { get; set; } = true;
         public bool SyncAchievements { get; set; } = true;
         public bool WriteToPlayniteAchievements { get; set; } = true;
+
+        /// <summary>
+        /// Opt-in automatic syncing: one pass shortly after Playnite starts, then one
+        /// every <see cref="SyncIntervalMinutes"/> minutes. Off by default - syncing only
+        /// happens manually (main menu / game menu "Sync now") until this is enabled.
+        /// </summary>
+        public bool AutoSync { get; set; } = false;
+
         public int SyncIntervalMinutes { get; set; } = 15;
 
         /// <summary>
@@ -90,6 +98,7 @@ namespace HydraSync
             current.SyncPlaytime = _backup.SyncPlaytime;
             current.SyncAchievements = _backup.SyncAchievements;
             current.WriteToPlayniteAchievements = _backup.WriteToPlayniteAchievements;
+            current.AutoSync = _backup.AutoSync;
             current.SyncIntervalMinutes = _backup.SyncIntervalMinutes;
             current.HydraDataDir = _backup.HydraDataDir;
             current.FetchSteamSchema = _backup.FetchSteamSchema;
@@ -105,6 +114,9 @@ namespace HydraSync
             }
 
             _plugin.SavePluginSettings(_plugin.Settings);
+
+            // Auto-sync / interval changes should take effect without a Playnite restart.
+            _plugin.RescheduleTimer();
         }
     }
 }

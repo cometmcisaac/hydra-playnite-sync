@@ -256,7 +256,7 @@ namespace HydraSync
             Task.Run(() => RunSyncAsync(notifyUser));
         }
 
-        /// <summary>Called from settings EndEdit after the interval changed.</summary>
+        /// <summary>Called from settings EndEdit after the interval or auto-sync setting changed.</summary>
         internal void RescheduleTimer()
         {
             if (_uiContext != null) ScheduleTimer();
@@ -264,8 +264,16 @@ namespace HydraSync
 
         private void ScheduleTimer()
         {
-            var minutes = Math.Max(1, Settings?.SyncIntervalMinutes ?? 15);
             _timer?.Dispose();
+            _timer = null;
+
+            // Automatic syncing is opt-in; when disabled only manual "Sync now" runs.
+            if (Settings == null || !Settings.AutoSync)
+            {
+                return;
+            }
+
+            var minutes = Math.Max(1, Settings?.SyncIntervalMinutes ?? 15);
             // First pass shortly after Playnite starts, then every interval.
             _timer = new Timer(_ => StartSync(false), null,
                 TimeSpan.FromSeconds(20), TimeSpan.FromMinutes(minutes));

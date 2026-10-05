@@ -25,8 +25,10 @@ handing achievement unlocks to the
 - **Built-in update checks** — Hydra Sync checks GitHub Releases a couple of minutes after
   startup (toggleable) and offers a one-click **Download & install update** from the
   `@Hydra Sync` main menu; Playnite then runs its normal confirm-and-restart flow.
-- Main-menu **Sync now**, a background timer, and a per-game
-  **Diagnose achievement sync…** tool for troubleshooting.
+- **Opt-in auto-sync** — off by default; enable it to sync once shortly after Playnite
+  starts and then on a configurable interval. Changes apply immediately, no restart needed.
+- Main-menu **Sync now** and a per-game **Diagnose achievement sync…** tool for
+  troubleshooting.
 
 See `README.md` for full documentation, settings reference, and the test checklist.
 

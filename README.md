@@ -6,7 +6,7 @@ achievement unlocks into the **Playnite Achievements** extension (justin-delano/
 
 - Extension ID: `A76358E9-BFA2-4189-B6F3-2307EA4E217B`
 - Type: Generic plugin · Target: Playnite 10.x (SDK 6.18) · .NET Framework 4.8
-- Package: `dist/HydraSync-1.5.0.pext`
+- Package: `dist/HydraSync-1.6.0.pext`
 
 ## What it does
 
@@ -18,6 +18,7 @@ achievement unlocks into the **Playnite Achievements** extension (justin-delano/
 | Achievement metadata | Real names/descriptions/icons from the game's local `steam_settings\achievements.json` definition file (bundled with Goldberg/GSE emulator files or Hydra-exported), an optional Steam Web API key for full schemas, or the public store API (legacy); cached 30 days in the plugin data dir. |
 | Playnite Achievements hand-off | Writes per-game JSON to PA's `achievement_cache` folder inside its plugin data dir (`%APPDATA%\Playnite\ExtensionsData\e6aad2c9-6e06-4d8d-ac55-ac3b252b5f7b\achievement_cache\<game-guid>.json` — Playnite keys plugin data by the plugin's class GUID, not its manifest name; the folder is auto-detected with fallbacks). PA's legacy-cache importer picks these up **on the next Playnite start** and then deletes the file. Steam-game writes use ProviderKey `Steam` — PA shows a proper Steam source label (name + provider icon/color) while unlock state comes from Hydra; **non-Steam games use ProviderKey `Manual`** — that's PA's own manual-achievements provider key, so PA keeps its manual-tracking features available for those games instead of treating them as owned by another provider. Display in PA is provider-agnostic (data is read by game GUID), so unlocks show up regardless of how the game was added. |
 | Matching | Strong: Playnite `GameId` == Hydra `objectId` (Steam AppID). Fallback: normalized title equality (case-insensitive, symbols stripped). |
+| Auto-sync | **Off by default.** Enable it in the extension settings to sync automatically ~20 s after Playnite starts and then once per interval (default 15 min). Saving settings applies immediately — no restart needed. While disabled, syncing only runs on demand via **Sync now**. |
 | Scope | **Sync existing games only** — Hydra-only games are not imported; unmatched Hydra entries are skipped. |
 | Updates | Checks the repo's GitHub Releases ~2 minutes after Playnite starts (toggle) and offers a one-click **Download & install update** from the `@Hydra Sync` main menu — Playnite then runs its normal confirm + restart flow. |
 
@@ -33,12 +34,12 @@ achievement unlocks into the **Playnite Achievements** extension (justin-delano/
 ## Install
 
 **Option A — package:**
-grab `HydraSync-1.5.0.pext` from this repo's **Releases** page (or build it yourself with
+grab `HydraSync-1.6.0.pext` from this repo's **Releases** page (or build it yourself with
 `scripts/package.sh`) and double-click it (Playnite must be installed; it registers the
 `.pext` file association). Playnite verifies and installs the extension automatically.
 
 **Option B — manual:**
-extract the contents of the `HydraSync-1.5.0.pext` package (a plain zip) into
+extract the contents of the `HydraSync-1.6.0.pext` package (a plain zip) into
 
 ```
 %APPDATA%\Playnite\Extensions\A76358E9-BFA2-4189-B6F3-2307EA4E217B\
@@ -62,14 +63,16 @@ so that `extension.yaml` sits directly in that folder. Restart Playnite.
 | Write to Playnite Achievements | on | Write unlock JSON into PA's `achievement_cache`. |
 | Fetch Steam schema (names/descriptions/icons) | on | Allow **network** schema lookups (only for games with unlocks; cached 30 days). Local definition files in the game folder are always used first, regardless of this toggle. |
 | Steam Web API key (optional) | *(empty)* | Full achievement schemas (names, descriptions, icons) via `ISteamUserStats/GetSchemaForGame`. Get a key at `steamcommunity.com/dev/apikey`. When empty, metadata falls back to local definition files, then the public store API (which no longer returns achievements for newer games). |
-| Sync interval (minutes) | 15 | Background timer period (1–1440). |
+| Auto-sync | **off** | Opt-in automatic syncing: one pass ~20 s after Playnite starts, then one every interval. While off, syncing only happens when you pick **Sync now**. Takes effect immediately when you save settings (no restart needed). |
+| Sync interval (minutes) | 15 | Auto-sync timer period (1–1440); only used when auto-sync is enabled. |
 | Hydra data directory | *(empty)* | Auto-detects `%APPDATA%\Hydra\hydra-db`, `%APPDATA%\hydralauncher\hydra-db` (older builds), `-staging` variants, or a direct-DB folder (accepted: the `hydra-db` folder itself or its parent). Set explicitly for portable Hydra installs. |
 | Check for Hydra Sync updates at startup | on | Query GitHub Releases ~2 minutes after Playnite starts and notify when a newer version is available. |
 
 **Sync now** and **Undo playtime changes…** are available from the extension's settings
 panel; **Sync now** is also in the Playnite main menu (`@Hydra Sync`) and on a game's
-context menu (`Hydra Sync → Sync Hydra playtime & achievements`). The background timer
-also runs 20 s after Playnite starts, then every interval.
+context menu (`Hydra Sync → Sync Hydra playtime & achievements`). Automatic syncing is
+**opt-in**: enable *Auto-sync* in the settings panel to also run a pass ~20 s after
+Playnite starts and then once per configured interval.
 
 **Diagnose achievement sync…** (game context menu) runs the achievement pipeline for that
 one game and shows a report: Hydra match, AppIDs used, local definition files found,
@@ -188,11 +191,17 @@ at Debug level in `%APPDATA%\Playnite\logs\Playnite.log` (search `HydraSync`).
 ## Windows test checklist
 
 1. **Load** — install the `.pext`, start Playnite. Check
-   `Add-ons → Extensions settings → Generic` shows *Hydra Sync* (v1.5.0) with no error banner, and
+   `Add-ons → Extensions settings → Generic` shows *Hydra Sync* (v1.6.0) with no error banner, and
    `%APPDATA%\Playnite\logs\Playnite.log` contains no `HydraSync` errors
    (search for `HydraSync`).
 2. **Settings** — open the extension's settings; verify all toggles/fields render and
    edits persist after OK + reopening, and the **Undo playtime changes…** button is present.
+   Confirm **Auto-sync** is **unchecked** on a fresh install.
+2b. **Auto-sync off (default)** — with Auto-sync unchecked, start Playnite and wait ~1 min:
+   no sync notification should appear. Only manual **Sync now** should sync.
+2c. **Auto-sync on** — enable Auto-sync (interval 1 min), save; the next timer pass should
+   fire without a Playnite restart (allow up to ~1 min). Disabling it and saving should stop
+   further automatic passes.
 3. **Manual sync** — main menu `@Hydra Sync → Sync now`. Expect a completion notification
    (`Hydra Sync: … matched …, raised playtime on N game(s) (+X min), …`) or a "Hydra
    database not found" notification when Hydra has never run. Verify detection works with
