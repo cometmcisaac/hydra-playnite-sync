@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Read manifest version
+        id: version
+        shell: pwsh
+        run: |
+          $m = (Select-String -Path src/HydraSync/extension.yaml -Pattern '^Version:\s*(.+)$').Matches
+          if ($m.Count -eq 0) { throw "Version not found in extension.yaml" }
+          $v = $m[0].Groups[1].Value.Trim()
+          "version=$v" >> $env:GITHUB_OUTPUT
+          $tag = "${{ github.ref_name }}".TrimStart("v")
+          if ($tag -ne $v) {
+            throw "Tag v$tag does not match extension.yaml version $v — bump the manifest or fix the tag."
+          }
+
+      - name: Build
+        run: dotnet build src/HydraSync/HydraSync.csproj -c Release -v q
+
+      - name: Package .pext
+        shell: pwsh
+        run: |
+          $out = "src/HydraSync/bin/Release"
+          $files = @(
+            "extension.yaml",
+            "icon.png",
+            "HydraSync.dll",
+            "LevelDb.Managed.dll",
+            "Snappier.dll",
+            "Newtonsoft.Json.dll",
+            "System.Buffers.dll",
+            "System.Memory.dll",
+            "System.Numerics.Vectors.dll",
+            "System.Runtime.CompilerServices.Unsafe.dll"
+          )
+          foreach ($f in $files) {
+            if (-not (Test-Path (Join-Path $out $f))) { throw "Missing build output: $f" }
+          }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zipPath = Join-Path (Resolve-Path dist) "HydraSync.zip"
+          if (Test-Path $zipPath) { Remove-Item $zipPath }
+          $zip = [System.IO.Compression.ZipFile]::Open($zipPath, "Create")
+          try {
+            foreach ($f in $files) {
+              [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                $zip, (Join-Path (Resolve-Path $out) $f), $f,
+                [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+            }
+          } finally {
+            $zip.Dispose()
+          }
+          $final = "dist/HydraSync-${{ steps.version.outputs.version }}.pext"
+          Move-Item $zipPath $final -Force
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.pext
+          body_path: .github/release-body.md
+          generate_release_notes: true

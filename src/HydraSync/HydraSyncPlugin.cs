@@ -43,6 +43,9 @@ namespace HydraSync
 
         public HydraSyncPlugin(IPlayniteAPI api) : base(api)
         {
+            // Playnite only lists a generic plugin in Settings → Extensions when
+            // Properties.HasSettings is true (AddonsViewModel GenericPlugins filter).
+            Properties = new GenericPluginProperties { HasSettings = true };
             Instance = this;
             _log = LogManager.GetLogger("HydraSync");
             Settings = LoadPluginSettings<PluginSettings>() ?? new PluginSettings();

@@ -6,7 +6,7 @@ achievement unlocks into the **Playnite Achievements** extension (justin-delano/
 
 - Extension ID: `A76358E9-BFA2-4189-B6F3-2307EA4E217B`
 - Type: Generic plugin · Target: Playnite 10.x (SDK 6.18) · .NET Framework 4.8
-- Package: `dist/HydraSync-1.4.0.pext`
+- Package: `dist/HydraSync-1.4.1.pext`
 
 ## What it does
 
@@ -32,12 +32,12 @@ achievement unlocks into the **Playnite Achievements** extension (justin-delano/
 ## Install
 
 **Option A — package:**
-grab `HydraSync-1.4.0.pext` from this repo's **Releases** page (or build it yourself with
+grab `HydraSync-1.4.1.pext` from this repo's **Releases** page (or build it yourself with
 `scripts/package.sh`) and double-click it (Playnite must be installed; it registers the
 `.pext` file association). Playnite verifies and installs the extension automatically.
 
 **Option B — manual:**
-extract the contents of the `HydraSync-1.4.0.pext` package (a plain zip) into
+extract the contents of the `HydraSync-1.4.1.pext` package (a plain zip) into
 
 ```
 %APPDATA%\Playnite\Extensions\A76358E9-BFA2-4189-B6F3-2307EA4E217B\
@@ -52,7 +52,7 @@ so that `extension.yaml` sits directly in that folder. Restart Playnite.
 
 ## Settings
 
-`Settings → Extensions → Hydra Sync`:
+`Add-ons → Extensions settings → Generic → Hydra Sync`:
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -159,7 +159,7 @@ Right-click the game → `Hydra Sync → Diagnose achievement sync…` and check
 | `PA plugin dir … NOT FOUND` | Playnite Achievements isn't installed (or never started) — the sync skips exports and shows an error notification. |
 | `Fingerprint recorded: yes` | Unlocks unchanged since the last write — PA should already have them; if not, restart Playnite to trigger the import. |
 
-Also check `Settings → Extensions → Hydra Sync`: **Sync achievements** and
+Also check `Add-ons → Extensions settings → Generic → Hydra Sync`: **Sync achievements** and
 **Write to Playnite Achievements** must be on. Every sync's notification now includes
 scan stats (`scanned …, files found for …, with unlocks in …`) — if those stay at 0,
 the issue is file discovery (first two rows above). Detailed per-game reasons are logged
@@ -168,7 +168,7 @@ at Debug level in `%APPDATA%\Playnite\logs\Playnite.log` (search `HydraSync`).
 ## Windows test checklist
 
 1. **Load** — install the `.pext`, start Playnite. Check
-   `Settings → Extensions` shows *Hydra Sync* (v1.4.0) with no error banner, and
+   `Add-ons → Extensions settings → Generic` shows *Hydra Sync* (v1.4.1) with no error banner, and
    `%APPDATA%\Playnite\logs\Playnite.log` contains no `HydraSync` errors
    (search for `HydraSync`).
 2. **Settings** — open the extension's settings; verify all toggles/fields render and
