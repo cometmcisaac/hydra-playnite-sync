@@ -123,6 +123,83 @@ namespace HydraSync
                     if (game != null) DiagnoseAchievements(game);
                 },
             };
+
+            // Per-game sync modes. Playnite's SDK has no sub-menu support, so the three
+            // modes are separate items and the active one is labelled "(current)".
+            var selected = args != null && args.Games != null ? args.Games : new List<Game>();
+            var currentMode = SelectedMode(selected);
+            yield return new GameMenuItem
+            {
+                Description = ModeDescription("Sync both playtime and achievements", GameSyncMode.Both, currentMode),
+                MenuSection = "Hydra Sync",
+                Action = a => SetGameMode(a.Games, GameSyncMode.Both),
+            };
+            yield return new GameMenuItem
+            {
+                Description = ModeDescription("Sync playtime only", GameSyncMode.PlaytimeOnly, currentMode),
+                MenuSection = "Hydra Sync",
+                Action = a => SetGameMode(a.Games, GameSyncMode.PlaytimeOnly),
+            };
+            yield return new GameMenuItem
+            {
+                Description = ModeDescription("Sync achievements only", GameSyncMode.AchievementsOnly, currentMode),
+                MenuSection = "Hydra Sync",
+                Action = a => SetGameMode(a.Games, GameSyncMode.AchievementsOnly),
+            };
+        }
+
+        private static string ModeDescription(string text, GameSyncMode mode, GameSyncMode current)
+        {
+            return mode == current ? text + " (current)" : text;
+        }
+
+        /// <summary>
+        /// Mode shown for the current selection: the first non-default override among
+        /// the selected games, otherwise "both". With a mixed selection the menu shows
+        /// whichever override comes first rather than claiming something is current.
+        /// </summary>
+        private GameSyncMode SelectedMode(List<Game> games)
+        {
+            if (games == null || _state == null) return GameSyncMode.Both;
+
+            foreach (var game in games)
+            {
+                if (game == null) continue;
+                var mode = _state.GetGameMode(game.Id);
+                if (mode != GameSyncMode.Both) return mode;
+            }
+
+            return GameSyncMode.Both;
+        }
+
+        private void SetGameMode(List<Game> games, GameSyncMode mode)
+        {
+            try
+            {
+                if (_state == null) _state = SyncState.Load(StatePath);
+
+                var count = 0;
+                foreach (var game in games ?? new List<Game>())
+                {
+                    if (game == null) continue;
+                    _state.SetGameMode(game.Id, mode);
+                    count++;
+                }
+
+                if (count == 0) return;
+
+                _state.Save(StatePath);
+                Notify(
+                    "hydrasync-mode",
+                    "Hydra Sync: " + count + (count == 1 ? " game set to " : " games set to ") +
+                    GameSyncModeLogic.Describe(mode) + ".",
+                    NotificationType.Info);
+            }
+            catch (Exception ex)
+            {
+                _log?.Error(ex, "HydraSync: failed to store per-game sync mode");
+                Notify("hydrasync-mode-error", "Hydra Sync could not save the per-game mode.", NotificationType.Error);
+            }
         }
 
         /// <summary>
@@ -147,6 +224,7 @@ namespace HydraSync
                     sb.AppendLine("Settings: SyncAchievements=" + Settings.SyncAchievements +
                         ", WriteToPA=" + Settings.WriteToPlayniteAchievements +
                         ", FetchSchema=" + Settings.FetchSteamSchema);
+                    sb.AppendLine("Per-game sync mode: " + GameSyncModeLogic.Describe(_state.GetGameMode(game.Id)));
 
                     var dbPath = ResolveHydraDbPath();
                     var dbOk = Directory.Exists(dbPath);
@@ -380,7 +458,8 @@ namespace HydraSync
                         $"raised playtime on {summary.PlaytimeRaisedCount} game(s) (+{FormatMinutes(summary.PlaytimeAddedSeconds)}), " +
                         $"{summary.AchievementsWritten} achievement set(s) updated " +
                         $"(scanned {summary.AchievementGamesScanned}, files found for {summary.AchievementGamesWithFiles}, " +
-                        $"with unlocks in {summary.AchievementGamesWithUnlocks}).",
+                        $"with unlocks in {summary.AchievementGamesWithUnlocks})" +
+                        PerGameOverrideSuffix(summary) + ".",
                         NotificationType.Info);
                 }
 
@@ -543,6 +622,28 @@ namespace HydraSync
                 _log?.Error(ex, "HydraSync: undo failed");
                 Notify("hydrasync-undo-error", "Hydra Sync undo failed: " + ex.Message, NotificationType.Error);
             }
+        }
+
+        /// <summary>
+        /// Appends a short note to the sync notification when per-game sync modes
+        /// caused games to be skipped, so a partial sync does not look broken.
+        /// </summary>
+        private static string PerGameOverrideSuffix(SyncSummary summary)
+        {
+            if (summary.PlaytimeSkipped <= 0 && summary.AchievementsSkipped <= 0) return string.Empty;
+
+            var parts = new List<string>();
+            if (summary.PlaytimeSkipped > 0)
+            {
+                parts.Add("playtime skipped on " + summary.PlaytimeSkipped);
+            }
+
+            if (summary.AchievementsSkipped > 0)
+            {
+                parts.Add("achievements skipped on " + summary.AchievementsSkipped);
+            }
+
+            return "; per-game sync mode: " + string.Join(", ", parts) + " game(s)";
         }
 
         private void Notify(string id, string text, NotificationType type)

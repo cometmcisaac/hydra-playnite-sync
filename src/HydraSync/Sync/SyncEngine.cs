@@ -25,6 +25,12 @@ namespace HydraSync.Sync
         public int AchievementGamesWithUnlocks;
         public bool PaUnavailable;
         public string Error;
+
+        /// <summary>Matched games whose playtime was skipped due to a per-game override.</summary>
+        public int PlaytimeSkipped;
+
+        /// <summary>Matched games whose achievements were skipped due to a per-game override.</summary>
+        public int AchievementsSkipped;
     }
 
     /// <summary>
@@ -91,9 +97,24 @@ namespace HydraSync.Sync
                     summary.Matched++;
                     matched.Add(new KeyValuePair<HydraGame, Game>(h, game));
 
-                    if (_settings.SyncPlaytime)
+                    var mode = _state.GetGameMode(game.Id);
+                    GameSyncModeLogic.Resolve(
+                        _settings.SyncPlaytime, _settings.SyncAchievements, mode,
+                        out var doPlaytime, out var doAchievements);
+
+                    if (doPlaytime)
                     {
                         ApplyPlaytime(h, game, changed, summary);
+                    }
+                    else if (_settings.SyncPlaytime)
+                    {
+                        // Global switch is on, this game is set to achievements-only.
+                        summary.PlaytimeSkipped++;
+                    }
+
+                    if (!doAchievements && _settings.SyncAchievements)
+                    {
+                        summary.AchievementsSkipped++;
                     }
                 }
 
@@ -103,10 +124,16 @@ namespace HydraSync.Sync
                     _runOnUi(() => _api.Database.Games.Update(list));
                 }
 
-                if (_settings.SyncAchievements && matched.Count > 0)
+                if (matched.Count > 0)
                 {
                     foreach (var pair in matched)
                     {
+                        GameSyncModeLogic.Resolve(
+                            _settings.SyncPlaytime, _settings.SyncAchievements,
+                            _state.GetGameMode(pair.Value.Id),
+                            out _, out var doAchievements);
+                        if (!doAchievements) continue;
+
                         await ProcessAchievementsAsync(pair.Key, pair.Value, summary);
                     }
                 }

@@ -73,12 +73,40 @@ jobs:
           Move-Item $zipPath $final -Force
           Get-ChildItem dist | Format-Table Name, Length
 
+      - name: Resolve release notes
+        id: notes
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $repoNotes = ".github/release-notes/v$version.md"
+          if (Test-Path $repoNotes) {
+            "path=$repoNotes" >> $env:GITHUB_OUTPUT
+            Write-Host "Using release notes: $repoNotes"
+          } else {
+            Write-Host "::warning::No release notes at $repoNotes - falling back to a generated body. Add that file before tagging future releases."
+            $fallback = Join-Path $env:RUNNER_TEMP "release-notes.md"
+            $lines = @(
+              "# Hydra Sync $version",
+              "",
+              "Automated release - see the repository README, release notes files and commits for details.",
+              "",
+              "## Install",
+              "",
+              "1. Download ``HydraSync-$version.pext`` from the assets below.",
+              "2. Double-click it in Playnite and confirm the update (Playnite offers to restart), or extract it to ``%APPDATA%\Playnite\Extensions\A76358E9-BFA2-4189-B6F3-2307EA4E217B\``.",
+              "3. Restart Playnite.",
+              "",
+              "Settings live under **Add-ons -> Extensions settings -> Generic -> Hydra Sync**."
+            )
+            ($lines -join "`n") | Set-Content -NoNewline -Path $fallback
+            "path=$fallback" >> $env:GITHUB_OUTPUT
+          }
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.pext
-          body_path: .github/release-body.md
-          generate_release_notes: true
+          body_path: ${{ steps.notes.outputs.path }}
 
       - name: Record release in InstallerManifest on main
         shell: pwsh

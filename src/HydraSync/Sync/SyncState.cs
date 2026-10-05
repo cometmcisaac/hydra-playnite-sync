@@ -37,9 +37,45 @@ namespace HydraSync.Sync
         public Dictionary<string, HydraGameState> Games { get; set; } =
             new Dictionary<string, HydraGameState>(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// Per-game sync mode overrides keyed by Playnite game GUID ("D" format).
+        /// Only non-default modes are stored, so both the mode and "use the
+        /// global settings" mean the same thing as far as the file is concerned.
+        /// </summary>
+        public Dictionary<string, GameSyncMode> GameModes { get; set; } =
+            new Dictionary<string, GameSyncMode>(StringComparer.OrdinalIgnoreCase);
+
         public bool NotifiedPaImport { get; set; }
 
         public DateTime? LastSyncUtc { get; set; }
+
+        /// <summary>
+        /// Gets the sync mode for a game, or <see cref="GameSyncMode.Both"/> when
+        /// the user never overrode it.
+        /// </summary>
+        public GameSyncMode GetGameMode(Guid gameId)
+        {
+            return GameModes.TryGetValue(gameId.ToString("D"), out var mode)
+                ? mode
+                : GameSyncMode.Both;
+        }
+
+        /// <summary>
+        /// Stores a per-game override, or clears it when the mode is the default
+        /// so games the user switched back to "both" behave like untouched ones.
+        /// </summary>
+        public void SetGameMode(Guid gameId, GameSyncMode mode)
+        {
+            var key = gameId.ToString("D");
+            if (mode == GameSyncMode.Both)
+            {
+                GameModes.Remove(key);
+            }
+            else
+            {
+                GameModes[key] = mode;
+            }
+        }
 
         public HydraGameState GetOrAdd(string key)
         {
@@ -64,6 +100,12 @@ namespace HydraSync.Sync
                         if (state.Games == null)
                         {
                             state.Games = new Dictionary<string, HydraGameState>(StringComparer.OrdinalIgnoreCase);
+                        }
+
+                        // State files written before per-game modes existed deserialize with a null dictionary.
+                        if (state.GameModes == null)
+                        {
+                            state.GameModes = new Dictionary<string, GameSyncMode>(StringComparer.OrdinalIgnoreCase);
                         }
 
                         return state;
