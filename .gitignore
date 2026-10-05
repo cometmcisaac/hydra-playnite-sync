@@ -1,0 +1,11 @@
+# Build output
+bin/
+obj/
+dist/
+*.pext
+
+# IDE / OS
+.vs/
+*.user
+.idea/
+.DS_Store

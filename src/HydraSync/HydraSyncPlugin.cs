@@ -1,0 +1,473 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Controls;
+using HydraSync.Achievements;
+using HydraSync.Hydra;
+using HydraSync.Sync;
+using Playnite.SDK;
+using Playnite.SDK.Events;
+using Playnite.SDK.Models;
+using Playnite.SDK.Plugins;
+
+namespace HydraSync
+{
+    /// <summary>
+    /// "Hydra Sync" - syncs playtime and achievements between Hydra Launcher and Playnite.
+    ///
+    /// Reads Hydra's local LevelDB (%APPDATA%\Hydra\hydra-db or older
+    /// %APPDATA%\hydralauncher\hydra-db) and cracker achievement files, applies playtime
+    /// deltas to matched Playnite games, and exports achievement unlocks into
+    /// PlayniteAchievements' import queue.
+    /// </summary>
+    public class HydraSyncPlugin : GenericPlugin
+    {
+        public static HydraSyncPlugin Instance { get; private set; }
+
+        public override Guid Id => new Guid("A76358E9-BFA2-4189-B6F3-2307EA4E217B");
+
+        public PluginSettings Settings { get; private set; }
+
+        private SyncState _state;
+        private SynchronizationContext _uiContext;
+        private Timer _timer;
+        private int _syncRunning;
+        private bool _paWarned;
+        private ILogger _log;
+
+        private string StatePath => Path.Combine(GetPluginUserDataPath(), "sync_state.json");
+        private string SchemaCacheDir => Path.Combine(GetPluginUserDataPath(), "steam_schema_cache");
+
+        public HydraSyncPlugin(IPlayniteAPI api) : base(api)
+        {
+            Instance = this;
+            _log = LogManager.GetLogger("HydraSync");
+            Settings = LoadPluginSettings<PluginSettings>() ?? new PluginSettings();
+            Settings.AttachPlugin(this);
+        }
+
+        public override void OnApplicationStarted(OnApplicationStartedEventArgs args)
+        {
+            _uiContext = SynchronizationContext.Current;
+            _state = SyncState.Load(StatePath);
+            ScheduleTimer();
+        }
+
+        public override void OnApplicationStopped(OnApplicationStoppedEventArgs args)
+        {
+            _timer?.Dispose();
+            _timer = null;
+        }
+
+        public override ISettings GetSettings(bool firstRunSettings) => Settings;
+
+        public override UserControl GetSettingsView(bool firstRunSettings) => new SettingsView();
+
+        public override IEnumerable<MainMenuItem> GetMainMenuItems(GetMainMenuItemsArgs args)
+        {
+            yield return new MainMenuItem
+            {
+                Description = "Sync now",
+                MenuSection = "@Hydra Sync",
+                Icon = "sync",
+                Action = _ => StartSync(true),
+            };
+        }
+
+        public override IEnumerable<GameMenuItem> GetGameMenuItems(GetGameMenuItemsArgs args)
+        {
+            yield return new GameMenuItem
+            {
+                Description = "Sync Hydra playtime & achievements",
+                MenuSection = "Hydra Sync",
+                Icon = "sync",
+                Action = _ => StartSync(true),
+            };
+            yield return new GameMenuItem
+            {
+                Description = "Diagnose achievement sync…",
+                MenuSection = "Hydra Sync",
+                Action = a =>
+                {
+                    var game = a.Games != null && a.Games.Count > 0 ? a.Games[0] : null;
+                    if (game != null) DiagnoseAchievements(game);
+                },
+            };
+        }
+
+        /// <summary>
+        /// Runs the achievement pipeline head (match → IDs → files → unlocks) for one game
+        /// and shows a human-readable report, so users can see exactly where sync stops.
+        /// </summary>
+        private void DiagnoseAchievements(Game game)
+        {
+            Task.Run(() =>
+            {
+                try
+                {
+                    if (_state == null) _state = SyncState.Load(StatePath);
+
+                    var sb = new StringBuilder();
+                    sb.AppendLine("Hydra Sync - achievement diagnostics");
+                    sb.AppendLine("Game: " + game.Name);
+                    sb.AppendLine("GameId: " + (string.IsNullOrEmpty(game.GameId) ? "(none)" : game.GameId));
+                    sb.AppendLine("InstallDirectory: " +
+                        (string.IsNullOrEmpty(game.InstallDirectory) ? "(none)" : game.InstallDirectory));
+                    sb.AppendLine();
+                    sb.AppendLine("Settings: SyncAchievements=" + Settings.SyncAchievements +
+                        ", WriteToPA=" + Settings.WriteToPlayniteAchievements +
+                        ", FetchSchema=" + Settings.FetchSteamSchema);
+
+                    var dbPath = ResolveHydraDbPath();
+                    var dbOk = Directory.Exists(dbPath);
+                    sb.AppendLine("Hydra DB: " + dbPath + (dbOk ? " (found)" : " (NOT FOUND)"));
+
+                    HydraGame h = null;
+                    IReadOnlyList<HydraGame> hydraGames = new List<HydraGame>();
+                    if (dbOk)
+                    {
+                        hydraGames = HydraDbReader.ReadGames(dbPath, _log);
+                        h = SyncEngine.FindMatchForGame(hydraGames, game);
+                    }
+                    sb.AppendLine("Hydra games in DB: " + hydraGames.Count);
+
+                    if (h == null)
+                    {
+                        sb.AppendLine("Hydra match: NONE - achievement sync only runs for matched games.");
+                    }
+                    else
+                    {
+                        sb.AppendLine("Hydra match: shop=" + h.Shop + ", objectId=" + h.ObjectId +
+                            ", exe=" + (string.IsNullOrEmpty(h.ExecutablePath) ? "(none)" : h.ExecutablePath));
+                        sb.AppendLine("Hydra playtime: " +
+                            (h.PlayTimeInMilliseconds / 1000).ToString() + " s, last played: " +
+                            (h.LastTimePlayed?.ToString() ?? "(never)"));
+
+                        var exe = string.IsNullOrEmpty(h.ExecutablePath) ? null : h.ExecutablePath;
+                        var ids = SyncEngine.BuildAppIds(h, exe, game.InstallDirectory);
+                        sb.AppendLine("AppIDs used: " + (ids.Count > 0 ? string.Join(", ", ids) : "(none)"));
+
+                        var localDefs = LocalAchievementDefinitions.FindFiles(exe, game.InstallDirectory);
+                        sb.AppendLine("Local definition files: " +
+                            (localDefs.Count > 0 ? string.Join(", ", localDefs) : "none"));
+                        sb.AppendLine("Steam Web API key set: " +
+                            (string.IsNullOrEmpty(Settings.SteamWebApiKey) ? "no" : "yes"));
+
+                        var files = AchievementFileLocator.Find(ids, exe, game.InstallDirectory);
+                        sb.AppendLine("Achievement files found: " + files.Count);
+                        foreach (var f in files) sb.AppendLine("  [" + f.Type + "] " + f.Path);
+
+                        var unlocks = SyncEngine.CollectUnlocks(files);
+                        sb.AppendLine("Unlocks parsed: " + unlocks.Count);
+                        var shown = 0;
+                        foreach (var kv in unlocks)
+                        {
+                            if (shown++ >= 25) { sb.AppendLine("  ..."); break; }
+                            string when;
+                            try
+                            {
+                                when = kv.Value.HasValue
+                                    ? DateTimeOffset.FromUnixTimeMilliseconds(kv.Value.Value)
+                                        .LocalDateTime.ToString("g")
+                                    : "?";
+                            }
+                            catch { when = "?"; }
+                            sb.AppendLine("  " + kv.Key + " @ " + when);
+                        }
+
+                        if (files.Count > 0 && unlocks.Count > 0)
+                        {
+                            var pending = Path.Combine(PaCacheWriter.CacheDir, game.Id.ToString("D") + ".json");
+                            sb.AppendLine("Cache file awaiting PA import: " +
+                                (File.Exists(pending)
+                                    ? "YES - restart Playnite so Playnite Achievements can import it"
+                                    : "no (already imported, or not written yet)"));
+
+                            var quarDir = Path.Combine(PaCacheWriter.PaPluginDir, "achievement_cache_quarantine");
+                            var quarantined = Directory.Exists(quarDir) &&
+                                Directory.GetFiles(quarDir, game.Id.ToString("D") + "*.json").Length > 0;
+                            if (quarantined)
+                            {
+                                sb.AppendLine("PA QUARANTINE: PA failed to parse our file for this game! " +
+                                    "Check " + quarDir);
+                            }
+
+                            _state.Games.TryGetValue(h.Key, out var st);
+                            sb.AppendLine("Fingerprint recorded: " +
+                                (st?.AchievementFingerprint != null
+                                    ? "yes (sync skips this game until unlocks change)"
+                                    : "no"));
+                        }
+                    }
+
+                    sb.AppendLine();
+                    sb.AppendLine("PA plugin dir: " + PaCacheWriter.PaPluginDir +
+                        (PaCacheWriter.IsAvailable ? "" : "  (NOT FOUND - is Playnite Achievements installed?)"));
+                    sb.AppendLine();
+                    sb.AppendLine("Note: Playnite itself has no achievement UI. Unlocks appear in " +
+                        "Playnite Achievements (game view / theme panel) only after PA imports the " +
+                        "cache file, which happens when Playnite next starts.");
+
+                    var report = sb.ToString();
+                    RunOnUi(() => PlayniteApi.Dialogs.ShowMessage(report, "Hydra Sync - Achievement diagnostics"));
+                }
+                catch (Exception ex)
+                {
+                    _log?.Error(ex, "HydraSync: diagnostics failed");
+                    Notify("hydrasync-diag-error", "Diagnosis failed: " + ex.Message, NotificationType.Error);
+                }
+            });
+        }
+
+        /// <summary>Kicks off an async sync pass (safe to call from any thread).</summary>
+        public void StartSync(bool notifyUser)
+        {
+            if (Interlocked.CompareExchange(ref _syncRunning, 1, 0) != 0) return;
+            Task.Run(() => RunSyncAsync(notifyUser));
+        }
+
+        /// <summary>Called from settings EndEdit after the interval changed.</summary>
+        internal void RescheduleTimer()
+        {
+            if (_uiContext != null) ScheduleTimer();
+        }
+
+        private void ScheduleTimer()
+        {
+            var minutes = Math.Max(1, Settings?.SyncIntervalMinutes ?? 15);
+            _timer?.Dispose();
+            // First pass shortly after Playnite starts, then every interval.
+            _timer = new Timer(_ => StartSync(false), null,
+                TimeSpan.FromSeconds(20), TimeSpan.FromMinutes(minutes));
+        }
+
+        private async Task RunSyncAsync(bool notifyUser)
+        {
+            try
+            {
+                if (_state == null) _state = SyncState.Load(StatePath);
+
+                var engine = new SyncEngine(
+                    PlayniteApi, Settings, _state, StatePath, SchemaCacheDir,
+                    ResolveHydraDbPath, _log, RunOnUi);
+
+                var summary = await engine.RunAsync();
+
+                if (summary.Error != null)
+                {
+                    Notify("hydrasync-error", "Hydra Sync failed: " + summary.Error, NotificationType.Error);
+                }
+                else if (!summary.HydraDbFound)
+                {
+                    if (notifyUser)
+                    {
+                        Notify("hydrasync-nodb",
+                            $"Hydra database not found at \"{ResolveHydraDbPath()}\". Is Hydra installed? " +
+                            "You can point Hydra Sync at a custom location in extension settings.",
+                            NotificationType.Error);
+                    }
+                }
+                else if (notifyUser)
+                {
+                    Notify("hydrasync-done",
+                        $"Hydra Sync: matched {summary.Matched} of {summary.HydraGamesRead} Hydra games, " +
+                        $"raised playtime on {summary.PlaytimeRaisedCount} game(s) (+{FormatMinutes(summary.PlaytimeAddedSeconds)}), " +
+                        $"{summary.AchievementsWritten} achievement set(s) updated " +
+                        $"(scanned {summary.AchievementGamesScanned}, files found for {summary.AchievementGamesWithFiles}, " +
+                        $"with unlocks in {summary.AchievementGamesWithUnlocks}).",
+                        NotificationType.Info);
+                }
+
+                if (summary.PaUnavailable)
+                {
+                    _log?.Warn("HydraSync: PlayniteAchievements not installed - achievement export skipped");
+                    if (!_paWarned)
+                    {
+                        _paWarned = true;
+                        Notify("hydrasync-nopa",
+                            "Hydra Sync: the Playnite Achievements data folder was not found, so achievement " +
+                            "export was skipped. If you want the unlocks there, install the \"Playnite Achievements\" " +
+                            "extension and restart Playnite once, then sync again.",
+                            NotificationType.Error);
+                    }
+                }
+
+                if (summary.AchievementsWritten > 0 && !_state.NotifiedPaImport)
+                {
+                    _state.NotifiedPaImport = true;
+                    _state.Save(StatePath);
+                    Notify("hydrasync-paimport",
+                        "Hydra Sync wrote achievements for Playnite Achievements. " +
+                        "Restart Playnite once so the extension imports them.",
+                        NotificationType.Info);
+                }
+            }
+            catch (Exception ex)
+            {
+                _log?.Error(ex, "HydraSync: sync failed");
+                Notify("hydrasync-error", "Hydra Sync failed: " + ex.Message, NotificationType.Error);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _syncRunning, 0);
+            }
+        }
+
+        private string ResolveHydraDbPath()
+        {
+            var configured = Settings?.HydraDataDir?.Trim();
+            if (string.IsNullOrEmpty(configured))
+            {
+                // Electron userData folder name changed across Hydra builds: newer releases
+                // use %APPDATA%\Hydra, older ones use %APPDATA%\hydralauncher (from the
+                // package name). Probe both, plus the staging DB and a direct-DB layout
+                // (CURRENT file at the folder root).
+                var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                foreach (var dir in DefaultHydraDbCandidates(appData))
+                {
+                    if (IsLevelDbDir(dir)) return dir;
+                }
+
+                return Path.Combine(appData, "Hydra", "hydra-db");
+            }
+
+            configured = Environment.ExpandEnvironmentVariables(configured);
+            try
+            {
+                if (IsLevelDbDir(configured)) return configured;
+                var sub = Path.Combine(configured, "hydra-db");
+                if (IsLevelDbDir(sub)) return sub;
+                var staging = Path.Combine(configured, "hydra-db-staging");
+                if (IsLevelDbDir(staging)) return staging;
+            }
+            catch
+            {
+                // Invalid path - report as not found below.
+            }
+
+            return configured;
+        }
+
+        private static IEnumerable<string> DefaultHydraDbCandidates(string appData)
+        {
+            foreach (var name in new[] { "Hydra", "hydralauncher" })
+            {
+                yield return Path.Combine(appData, name, "hydra-db");
+                yield return Path.Combine(appData, name, "hydra-db-staging");
+                yield return Path.Combine(appData, name); // direct-DB layout
+            }
+        }
+
+        private static bool IsLevelDbDir(string dir)
+        {
+            return !string.IsNullOrEmpty(dir) && File.Exists(Path.Combine(dir, "CURRENT"));
+        }
+
+        /// <summary>
+        /// Restores every game's playtime to the value it had before Hydra Sync first
+        /// modified it (exact for entries captured by v1.2+, approximate recovery for
+        /// entries written by the additive v1.x builds), then clears the playtime
+        /// bookkeeping so the next sync re-applies replace-if-larger from a clean slate.
+        /// Achievement state is untouched.
+        /// </summary>
+        internal void UndoPlaytimeChanges()
+        {
+            try
+            {
+                var confirm = PlayniteApi.Dialogs.ShowMessage(
+                    "Restore Playnite playtime to what it was before Hydra Sync changed it?\n\n" +
+                    "Only playtime is affected - achievements stay as they are. Games last " +
+                    "synced by an older plugin version are restored approximately.",
+                    "Hydra Sync",
+                    System.Windows.MessageBoxButton.YesNo);
+                if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+                if (_state == null) _state = SyncState.Load(StatePath);
+
+                var updates = new List<Game>();
+                var approximate = 0;
+
+                foreach (var kv in _state.Games)
+                {
+                    var st = kv.Value;
+                    if (st == null || string.IsNullOrEmpty(st.PlayniteGameId) ||
+                        !Guid.TryParse(st.PlayniteGameId, out var gid))
+                    {
+                        continue;
+                    }
+
+                    var game = PlayniteApi.Database.Games.Get(gid);
+                    if (game == null) continue;
+
+                    var legacyAddedMs = st.LastHydraMs > 0
+                        ? st.LastHydraMs + Math.Max(0, st.MsCarry)
+                        : 0;
+                    var restored = PlaytimeSyncLogic.Restore(
+                        game.Playtime, st.OriginalPlaytimeSecs, legacyAddedMs, out var wasApprox);
+
+                    if (restored != game.Playtime)
+                    {
+                        game.Playtime = restored;
+                        updates.Add(game);
+                        if (wasApprox) approximate++;
+                    }
+
+                    // Clear playtime bookkeeping; keep AchievementFingerprint.
+                    st.OriginalPlaytimeSecs = null;
+                    st.LastHydraMs = 0;
+                    st.MsCarry = 0;
+                }
+
+                if (updates.Count > 0)
+                {
+                    PlayniteApi.Database.Games.Update(updates);
+                }
+
+                _state.Save(StatePath);
+
+                Notify("hydrasync-undo", updates.Count == 0
+                        ? "Hydra Sync: no playtime changes to undo."
+                        : $"Hydra Sync: playtime restored for {updates.Count} game(s)" +
+                          (approximate > 0 ? $" ({approximate} recovered approximately)" : "") +
+                          ". The next sync applies the replace-if-larger rule again.",
+                        NotificationType.Info);
+            }
+            catch (Exception ex)
+            {
+                _log?.Error(ex, "HydraSync: undo failed");
+                Notify("hydrasync-undo-error", "Hydra Sync undo failed: " + ex.Message, NotificationType.Error);
+            }
+        }
+
+        private void Notify(string id, string text, NotificationType type)
+        {
+            RunOnUi(() => PlayniteApi.Notifications.Add(id, text, type));
+        }
+
+        private void RunOnUi(Action action)
+        {
+            var ctx = _uiContext;
+            if (ctx == null)
+            {
+                action();
+                return;
+            }
+
+            ctx.Post(_ => action(), null);
+        }
+
+        private static string FormatMinutes(long seconds)
+        {
+            var minutes = seconds / 60;
+            if (minutes >= 60)
+            {
+                return $"{minutes / 60}h {minutes % 60}m";
+            }
+
+            return $"{minutes}m";
+        }
+    }
+}
