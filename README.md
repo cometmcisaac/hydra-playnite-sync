@@ -14,8 +14,8 @@ achievement unlocks into the **Playnite Achievements** extension (justin-delano/
 |---|---|
 | Playtime sync | Reads Hydra's local LevelDB (`%APPDATA%\Hydra\hydra-db`) and applies a **replace-if-larger** rule to `Game.Playtime`: Hydra's cumulative total **replaces** Playnite's value only when it is strictly higher; otherwise Playnite's playtime is left untouched. Never adds on top, so nothing is double-counted. `LastActivity` moves forward from Hydra's last session (never backward). Includes an **Undo** that restores modified games to their pre-sync playtime. |
 | Last activity | Moves `LastActivity` forward from Hydra's `lastTimePlayed` (never backward). |
-| Achievement unlock sync | Reads cracker/emulator achievement files on disk (CODEX, RUNE, OnlineFix, Goldberg/GSE, RLD!, EMPRESS, Skidrow, CreamAPI, SmartSteamEmu, razor1911, userstats, 3DM, ali213, Steam userdata cache) — the same file map Hydra itself uses. Works for **non-Steam Hydra games too** (shop=custom/launchbox): AppIDs are discovered from the game folder (`steam_appid.txt`, Goldberg `steam_settings\<id>\` dirs), and ID-independent game-dir formats are always scanned. |
-| Achievement metadata | Real names/descriptions/icons from the game's local `steam_settings\achievements.json` definition file (shipped with Goldberg/GSE cracks or Hydra-exported), an optional Steam Web API key for full schemas, or the public store API (legacy); cached 30 days in the plugin data dir. |
+| Achievement unlock sync | Reads achievement files on disk (CODEX, RUNE, OnlineFix, Goldberg/GSE, RLD!, EMPRESS, Skidrow, CreamAPI, SmartSteamEmu, razor1911, userstats, 3DM, ali213, Steam userdata cache) — the same file map Hydra itself uses. Works for **non-Steam Hydra games too** (shop=custom/launchbox): AppIDs are discovered from the game folder (`steam_appid.txt`, Goldberg `steam_settings\<id>\` dirs), and ID-independent game-dir formats are always scanned. |
+| Achievement metadata | Real names/descriptions/icons from the game's local `steam_settings\achievements.json` definition file (bundled with Goldberg/GSE emulator files or Hydra-exported), an optional Steam Web API key for full schemas, or the public store API (legacy); cached 30 days in the plugin data dir. |
 | Playnite Achievements hand-off | Writes per-game JSON to PA's `achievement_cache` folder inside its plugin data dir (`%APPDATA%\Playnite\ExtensionsData\e6aad2c9-6e06-4d8d-ac55-ac3b252b5f7b\achievement_cache\<game-guid>.json` — Playnite keys plugin data by the plugin's class GUID, not its manifest name; the folder is auto-detected with fallbacks). PA's legacy-cache importer picks these up **on the next Playnite start** and then deletes the file. Steam-game writes use ProviderKey `Steam` — PA shows a proper Steam source label (name + provider icon/color) while unlock state comes from Hydra; **non-Steam games use ProviderKey `Manual`** — that's PA's own manual-achievements provider key, so PA keeps its manual-tracking features available for those games instead of treating them as owned by another provider. Display in PA is provider-agnostic (data is read by game GUID), so unlocks show up regardless of how the game was added. |
 | Matching | Strong: Playnite `GameId` == Hydra `objectId` (Steam AppID). Fallback: normalized title equality (case-insensitive, symbols stripped). |
 | Scope | **Sync existing games only** — Hydra-only games are not imported; unmatched Hydra entries are skipped. |
@@ -97,13 +97,13 @@ re-applies the replace-if-larger rule from a clean slate.
    State lives in
    `sync_state.json` in the plugin's data folder:
    `%APPDATA%\Playnite\ExtensionsData\A76358E9-BFA2-4189-B6F3-2307EA4E217B\`.
-4. **Achievements** — for matched games: locate cracker achievement files (Steam-AppID
+4. **Achievements** — for matched games: locate achievement files on disk (Steam-AppID
    static paths when an AppID is known, plus ID-independent game-directory formats
    always) → parse (exact port of Hydra's parsers, incl. INI case-sensitive quirks and
-   per-cracker timestamp formats) → discover AppIDs from the game folder for non-Steam
+   per-format timestamp formats) → discover AppIDs from the game folder for non-Steam
    entries (`steam_appid.txt`, `steam_settings\<digits>\`) → build real achievement
    definitions (names/descriptions/icons) in schema order: **local** `steam_settings\achievements.json`
-   first (crack-shipped or Hydra-exported; never read from digit subdirs, those are unlock
+   first (bundled with the game files or Hydra-exported; never read from digit subdirs, those are unlock
    state) → optional **Steam Web API key** lookup → public store API as legacy fallback →
    unlock-only entries fall back to prettified API names → fingerprint
    (SHA-256 of sorted `name|unlocktime`, namespaced by provider key) → if changed, write
@@ -152,7 +152,7 @@ Right-click the game → `Hydra Sync → Diagnose achievement sync…` and check
 | Report says | Meaning / fix |
 |---|---|
 | `Hydra match: NONE` | The game isn't matched to a Hydra entry (title/GameId differ). Playtime won't sync either for this game. |
-| `Achievement files found: 0` | No cracker/emulator/Steam cache file was located. Verify Hydra itself shows achievements for this game. For real-Steam games the `userdata\<user>\config\librarycache\<appid>.json` file must exist. |
+| `Achievement files found: 0` | No achievement file was located on disk (including Steam cache files). Verify Hydra itself shows achievements for this game. For real-Steam games the `userdata\<user>\config\librarycache\<appid>.json` file must exist. |
 | `files found: N` but `Unlocks parsed: 0` | Files exist but contain no unlocked achievements (or an unsupported variant) — check the paths listed, open them manually. |
 | `Cache file awaiting PA import: YES` | We wrote the file; Playnite Achievements imports it **when Playnite next starts** — restart Playnite. |
 | `PA QUARANTINE` | PA's parser rejected our file — please report this with the file from `achievement_cache_quarantine`. |
@@ -189,16 +189,16 @@ at Debug level in `%APPDATA%\Playnite\logs\Playnite.log` (search `HydraSync`).
 6. **Playtime (Hydra running)** — repeat while Hydra is open (exercises the snapshot-copy
    fallback). Play something in Hydra, wait for its playtime counter to tick, sync, verify
    Hydra's new total lands in Playnite.
-7. **Achievements** — for a Steam game cracked with a supported cracker, ensure an
-   achievement file exists (e.g. Goldberg:
+7. **Achievements** — for a Steam game, ensure an achievement file exists on disk
+   (e.g. Goldberg:
    `%APPDATA%\Goldberg SteamEmu Saves\<appid>\achievements.json`). Sync → verify
    `%APPDATA%\Playnite\ExtensionsData\e6aad2c9-6e06-4d8d-ac55-ac3b252b5f7b\achievement_cache\<guid>.json`
    appears (then disappears after PA import), get the "restart Playnite" notification,
-   restart, and confirm unlocks show in Playnite Achievements (provider *Hydra*).
+   restart, and confirm unlocks show in Playnite Achievements (provider *Steam*).
 8. **Idempotence** — sync twice more: the cache JSON must not be rewritten when nothing
    changed (fingerprint match).
-9. **Non-Steam game** — a non-Steam game matched to Playnite by title with cracker
-   achievement files in its folder (e.g. `SteamData\user_stats.ini`, or
+9. **Non-Steam game** — a non-Steam game matched to Playnite by title with achievement
+   files in its folder (e.g. `SteamData\user_stats.ini`, or
    `steam_settings\<appid>\achievements.json` + `steam_appid.txt`): sync → cache JSON
    written with `"ProviderKey": "Manual"` → restart → unlocks visible in PA, **and**
    PA's manual-achievement editing features for that game are still offered (an "Manual"
