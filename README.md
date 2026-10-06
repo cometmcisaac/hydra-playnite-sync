@@ -6,7 +6,7 @@ achievement unlocks into the **Playnite Achievements** extension (justin-delano/
 
 - Extension ID: `A76358E9-BFA2-4189-B6F3-2307EA4E217B`
 - Type: Generic plugin · Target: Playnite 10.x (SDK 6.18) · .NET Framework 4.8
-- Package: `dist/HydraSync-1.9.0.pext`
+- Package: `dist/HydraSync-1.9.1.pext`
 
 ## What it does
 
@@ -36,12 +36,12 @@ achievement unlocks into the **Playnite Achievements** extension (justin-delano/
 ## Install
 
 **Option A — package:**
-grab `HydraSync-1.9.0.pext` from this repo's **Releases** page (or build it yourself with
+grab `HydraSync-1.9.1.pext` from this repo's **Releases** page (or build it yourself with
 `scripts/package.sh`) and double-click it (Playnite must be installed; it registers the
 `.pext` file association). Playnite verifies and installs the extension automatically.
 
 **Option B — manual:**
-extract the contents of the `HydraSync-1.9.0.pext` package (a plain zip) into
+extract the contents of the `HydraSync-1.9.1.pext` package (a plain zip) into
 
 ```
 %APPDATA%\Playnite\Extensions\A76358E9-BFA2-4189-B6F3-2307EA4E217B\
@@ -318,7 +318,9 @@ switches and the stored mode.
   requested behavior: Hydra wins whenever it is higher.
 - Undo restores the value captured immediately before the plugin first changed a game, so
   a game's original playtime comes back exactly. It only affects games this plugin touched;
-  anything Playnite recorded after the first sync is discarded by design.
+  anything Playnite recorded after the first sync is discarded by design. In the rare case
+  where no original was recorded, the value is recovered from how much the plugin added and
+  the completion notification labels those games as approximate.
 - For non-Steam games without any discoverable AppID or game-dir achievement file,
   nothing is written (there's nothing to read). Achievement names fall back to
   prettified API names when no schema source works (local definition files absent, no

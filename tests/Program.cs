@@ -249,19 +249,19 @@ class Program
             Check(!PlaytimeSyncLogic.ShouldRaise(100, 0), "hydra 0 → never replace");
 
             Check(PlaytimeSyncLogic.CaptureOriginal(500, 0) == 500, "capture original (fresh entry) = current");
-            Check(PlaytimeSyncLogic.CaptureOriginal(1300, 800_000) == 500, "capture original (legacy additive) subtracts 800s added");
+            Check(PlaytimeSyncLogic.CaptureOriginal(1300, 800_000) == 500, "capture original (recorded added amount) subtracts 800s added");
             Check(PlaytimeSyncLogic.CaptureOriginal(500, 800_000) == 500, "capture original: impossible recovery falls back to current");
 
             ulong rest = PlaytimeSyncLogic.Restore(9999, 123, 0, out var approx);
             Check(rest == 123 && !approx, "undo: exact original wins");
             rest = PlaytimeSyncLogic.Restore(1300, null, 800_000, out approx);
-            Check(rest == 500 && approx, "undo: legacy additive recovered approximately", $"(got {rest}, approx={approx})");
+            Check(rest == 500 && approx, "undo: recovered from recorded added amount (approximate)", $"(got {rest}, approx={approx})");
             rest = PlaytimeSyncLogic.Restore(800, null, 800_000, out approx);
             Check(rest == 0 && approx, "undo: playtime fully from plugin → restored to 0");
             rest = PlaytimeSyncLogic.Restore(900, null, 0, out approx);
             Check(rest == 900 && !approx, "undo: no bookkeeping → unchanged");
             rest = PlaytimeSyncLogic.Restore(500, null, 800_000, out approx);
-            Check(rest == 500 && !approx, "undo: legacy added > playtime → unchanged (no negative)");
+            Check(rest == 500 && !approx, "undo: recorded added > playtime → unchanged (no negative)");
 
             Console.WriteLine();
             Console.WriteLine("== 6. Local achievement definitions (Steam schema from game dir) ==");

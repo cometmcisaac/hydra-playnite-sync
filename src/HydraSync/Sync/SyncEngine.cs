@@ -206,10 +206,10 @@ namespace HydraSync.Sync
                 if (st == null || st.OriginalPlaytimeSecs == null)
                 {
                     st = st ?? new HydraGameState();
-                    // First modification. v1.x builds stored no original - for their entries
-                    // recover the pre-plugin value from the cumulative additive amount.
-                    var legacyAddedMs = st.LastHydraMs > 0 ? st.LastHydraMs + Math.Max(0, st.MsCarry) : 0;
-                    st.OriginalPlaytimeSecs = PlaytimeSyncLogic.CaptureOriginal(g.Playtime, legacyAddedMs);
+                    // First modification. When no original was recorded but the entry does
+                    // carry how much was added, recover the pre-plugin value from that.
+                    var recordedAddedMs = st.LastHydraMs > 0 ? st.LastHydraMs + Math.Max(0, st.MsCarry) : 0;
+                    st.OriginalPlaytimeSecs = PlaytimeSyncLogic.CaptureOriginal(g.Playtime, recordedAddedMs);
                 }
 
                 summary.PlaytimeAddedSeconds += (long)hydraSecs - (long)g.Playtime;
@@ -229,8 +229,8 @@ namespace HydraSync.Sync
 
             st = st ?? new HydraGameState();
             st.PlayniteGameId = g.Id.ToString("D");
-            // LastHydraMs/MsCarry are delta bookkeeping from the old additive mode and are
-            // deliberately no longer updated; legacy values are kept for undo recovery.
+            // LastHydraMs/MsCarry are no longer written; they are only read as a recorded
+            // added amount so an entry without an original can still be undone.
             _state.Games[key] = st;
 
             if (dirty) changed[g.Id] = g;

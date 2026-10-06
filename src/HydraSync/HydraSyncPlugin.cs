@@ -847,8 +847,8 @@ namespace HydraSync
             {
                 var confirm = PlayniteApi.Dialogs.ShowMessage(
                     "Restore Playnite playtime to what it was before Hydra Sync changed it?\n\n" +
-                    "Only playtime is affected - achievements stay as they are. Games last " +
-                    "synced by an older plugin version are restored approximately.",
+                    "Only playtime is affected - achievements stay as they are. The next sync " +
+                    "applies the replace-if-larger rule again from a clean slate.",
                     "Hydra Sync",
                     System.Windows.MessageBoxButton.YesNo);
                 if (confirm != System.Windows.MessageBoxResult.Yes) return;
@@ -870,11 +870,11 @@ namespace HydraSync
                     var game = PlayniteApi.Database.Games.Get(gid);
                     if (game == null) continue;
 
-                    var legacyAddedMs = st.LastHydraMs > 0
+                    var recordedAddedMs = st.LastHydraMs > 0
                         ? st.LastHydraMs + Math.Max(0, st.MsCarry)
                         : 0;
                     var restored = PlaytimeSyncLogic.Restore(
-                        game.Playtime, st.OriginalPlaytimeSecs, legacyAddedMs, out var wasApprox);
+                        game.Playtime, st.OriginalPlaytimeSecs, recordedAddedMs, out var wasApprox);
 
                     if (restored != game.Playtime)
                     {

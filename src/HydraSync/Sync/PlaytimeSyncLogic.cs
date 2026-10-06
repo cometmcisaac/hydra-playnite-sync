@@ -25,15 +25,16 @@ namespace HydraSync.Sync
 
         /// <summary>
         /// Original (pre-plugin) playtime for a game the plugin is about to modify.
-        /// v1.x builds recorded no original; for entries written by those additive builds,
-        /// recover it by subtracting the cumulative seconds they added (their deltas
+        /// The current value is the answer whenever the plugin hasn't touched the game yet.
+        /// For entries that carry no original but do record how much was added to the game,
+        /// the pre-plugin value is recovered by subtracting that recorded amount (their deltas
         /// telescoped to LastHydraMs + MsCarry, in ms). Falls back to the current value
         /// when that recovery isn't possible or would go negative.
         /// </summary>
-        public static ulong CaptureOriginal(ulong currentPlaytime, long legacyAddedMs)
+        public static ulong CaptureOriginal(ulong currentPlaytime, long recordedAddedMs)
         {
-            if (legacyAddedMs <= 0) return currentPlaytime;
-            var added = legacyAddedMs / 1000;
+            if (recordedAddedMs <= 0) return currentPlaytime;
+            var added = recordedAddedMs / 1000;
             if (added > 0 && (ulong)added <= currentPlaytime)
             {
                 return currentPlaytime - (ulong)added;
@@ -43,12 +44,13 @@ namespace HydraSync.Sync
         }
 
         /// <summary>
-        /// Restored playtime for undo. Exact when an original was captured; approximate for
-        /// legacy additive entries (recovered via <paramref name="legacyAddedMs"/>); unchanged
-        /// when neither is available. <paramref name="approximate"/> reports which path ran.
+        /// Restored playtime for undo. Exact when an original was captured; approximate when
+        /// only a recorded added amount is available (recovered via
+        /// <paramref name="recordedAddedMs"/>); unchanged when neither is available.
+        /// <paramref name="approximate"/> reports which path ran.
         /// </summary>
         public static ulong Restore(ulong currentPlaytime, ulong? originalPlaytimeSecs,
-            long legacyAddedMs, out bool approximate)
+            long recordedAddedMs, out bool approximate)
         {
             if (originalPlaytimeSecs.HasValue)
             {
@@ -56,9 +58,9 @@ namespace HydraSync.Sync
                 return originalPlaytimeSecs.Value;
             }
 
-            if (legacyAddedMs > 0)
+            if (recordedAddedMs > 0)
             {
-                var added = legacyAddedMs / 1000;
+                var added = recordedAddedMs / 1000;
                 if (added > 0 && (ulong)added <= currentPlaytime)
                 {
                     approximate = true;
