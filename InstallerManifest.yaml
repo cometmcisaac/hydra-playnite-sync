@@ -4,6 +4,12 @@
 # prepends its package entry to this file on main.
 AddonId: A76358E9-BFA2-4189-B6F3-2307EA4E217B
 Packages:
+  - Version: 1.9.1
+    RequiredApiVersion: 6.0
+    ReleaseDate: 2026-10-06
+    PackageUrl: https://github.com/cometmcisaac/hydra-playnite-sync/releases/download/v1.9.1/HydraSync-1.9.1.pext
+    Changelog:
+    - "See https://github.com/cometmcisaac/hydra-playnite-sync/releases/tag/v1.9.1 for details."
   - Version: 1.9.0
     RequiredApiVersion: 6.0
     ReleaseDate: 2026-10-06
