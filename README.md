@@ -72,9 +72,9 @@ so that `extension.yaml` sits directly in that folder. Restart Playnite.
 | Push playtime to HowLongToBeat | **off** | After a sync raises a game's playtime, ask the [HowLongToBeat](https://github.com/Lacro59/playnite-howlongtobeat-plugin) extension to submit the new total — the same call it makes when a game exits. Needs HowLongToBeat installed and logged in. Only games the sync actually raised are pushed (max 25 per sync). |
 
 **Sync now** and **Undo playtime changes…** are available from the extension's settings
-panel; **Sync now** is also in the Playnite main menu (`@Hydra Sync`) and on a game's
-context menu (`Hydra Sync → Sync Hydra playtime & achievements`). Automatic syncing is
-**opt-in**: enable *Auto-sync* in the settings panel to also run a pass ~20 s after
+panel; **Sync now** is also in the Playnite main menu (`@Hydra Sync`), and a game's context
+menu (`Hydra Sync`) can sync that one game — see [Per-game sync](#per-game-sync). Automatic
+syncing is **opt-in**: enable *Auto-sync* in the settings panel to also run a pass ~20 s after
 Playnite starts and then once per configured interval.
 
 **Diagnose achievement sync…** (game context menu) runs the achievement pipeline for that
@@ -108,7 +108,9 @@ Details worth knowing:
   **Diagnose HowLongToBeat playtime sync…** (reports whether the extension is reachable,
   logged in, has data for the game, and whether the game is excluded).
 
-**Per-game sync** — right-click any game (or multi-select several) → `Hydra Sync`:
+### Per-game sync
+
+Right-click any game (or multi-select several) → `Hydra Sync`:
 
 *Sync now (one-shot, runs immediately for the selected games):*
 
@@ -207,25 +209,13 @@ assemblies, so it cross-compiles on macOS/Linux:
 export DOTNET_ROOT="/opt/homebrew/opt/dotnet/libexec"   # macOS brew dotnet
 export PATH="$DOTNET_ROOT/bin:$PATH"
 dotnet build src/HydraSync/HydraSync.csproj -v q
+dotnet run --project tests/hydrasync-tests.csproj   # test harness
 ./scripts/package.sh        # → dist/HydraSync-<version>.pext
 ```
 
-### Cutting a release
-
-1. Bump `Version:` in `src/HydraSync/extension.yaml` and the version references in this README.
-2. Write the release notes at `.github/release-notes/vX.Y.Z.md` (template in
-   `.github/release-notes/_template.md`) — one file per release, this version's changes only.
-   CI uses it as the GitHub release body and warns if it's missing.
-3. Commit, then tag and push:
-
-```bash
-git add -A && git commit -m "Release vX.Y.Z"
-git tag vX.Y.Z && git push origin main && git push origin vX.Y.Z
-```
-
-CI (`windows-latest`) runs the test harness, verifies the tag matches the manifest version,
-builds, packages the `.pext`, publishes the release with your notes, and records the release
-in `InstallerManifest.yaml`. See `.github/release-notes/README.md` for the full convention.
+The `.pext` is a plain zip, so the output of `scripts/package.sh` can be installed by
+extracting it (see [Install](#install)). Published releases are built by CI from a pushed tag,
+so building locally is only needed to test changes or to package a specific version yourself.
 
 Layout:
 
@@ -237,105 +227,87 @@ src/HydraSync/
   extension.yaml            # manifest
   Hydra/                    # LevelDB reader, game model, achievement file locator + parsers
   Achievements/             # Steam schema client, PA cache writer
+  Integrations/             # late-bound bridge to the HowLongToBeat extension
   Sync/                     # sync engine + persisted state
   Update/                   # GitHub release update checker
 tests/                      # net10 test harness + LevelDB fixture (run in CI before release)
 ```
 
 Unit/integration checks for the Hydra layer (LevelDB fixture + every achievement parser
-format + game-dir discovery) live in `tests/` and run in CI before each release. The fixture
-DB is committed and was produced with Node `classic-level` to mirror Hydra's real on-disk
-encoding; regenerate it with `cd tests/fixtures && npm i && node make-fixture.js`. Run the
-same checks locally with `dotnet run --project tests/hydrasync-tests.csproj`.
+format + game-dir discovery + version/update logic + the HowLongToBeat bridge) live in `tests/`
+and run in CI before each release. The fixture DB is committed and was produced with Node
+`classic-level` to mirror Hydra's real on-disk encoding; regenerate it with
+`cd tests/fixtures && npm i && node make-fixture.js`.
 
-## Troubleshooting achievements
+## Troubleshooting
 
-Right-click the game → `Hydra Sync → Diagnose achievement sync…` and check the report:
+Start with the log: `%APPDATA%\Playnite\logs\Playnite.log`, search for `HydraSync`. Warnings
+and errors explain where each game stopped. Two in-app reports cover most cases:
+
+- `Hydra Sync → Diagnose achievement sync…` (per game) — match, AppIDs, definition files,
+  achievement files found, unlocks parsed, pending PA import, quarantine, per-game sync mode.
+- `Hydra Sync → Diagnose HowLongToBeat playtime sync…` (per game) — whether the extension is
+  reachable, logged in, has data for the game, and whether the game is excluded.
+
+### Playtime isn't syncing
+
+| Symptom | Cause / fix |
+|---|---|
+| "Hydra database not found at …" | Wrong folder. Hydra Sync auto-detects `%APPDATA%\Hydra\hydra-db`, older `%APPDATA%\hydralauncher\hydra-db`, `-staging` variants and direct-DB layouts; if yours is elsewhere, set **Hydra data directory**. |
+| Game's playtime unchanged | Playtime is only replaced when **Hydra's total is higher**. If Playnite's value is already larger, the game is left alone by design. |
+| Playtime doubled or wrong after an old version | Older builds added to the existing value. **Undo playtime changes…** (settings panel) restores the pre-sync values, then the next sync applies the replace rule. |
+| Wrong game matched | Matching is by AppID first, then normalized title. Only games already in your library are synced — Hydra-only titles are never added. |
+| Nothing happens on its own | Automatic syncing is **off by default**. Enable **Auto-sync**; it takes effect when you save. |
+| Hydra is running / game folders on a network drive | Expected: Hydra locks its database, so a temp snapshot copy is read instead. No action needed. |
+
+### Achievements aren't showing up
+
+Playnite itself has no achievement display — unlocks appear in **Playnite Achievements**, and
+its importer only runs at Playnite startup. A sync always needs **one Playnite restart** before
+new unlocks show up.
+
+Right-click the game → `Hydra Sync → Diagnose achievement sync…` and read the report:
 
 | Report says | Meaning / fix |
 |---|---|
-| `Hydra match: NONE` | The game isn't matched to a Hydra entry (title/GameId differ). Playtime won't sync either for this game. |
-| `Achievement files found: 0` | No achievement file was located on disk (including Steam cache files). Verify Hydra itself shows achievements for this game. For real-Steam games the `userdata\<user>\config\librarycache\<appid>.json` file must exist. |
-| `files found: N` but `Unlocks parsed: 0` | Files exist but contain no unlocked achievements (or an unsupported variant) — check the paths listed, open them manually. |
-| `Cache file awaiting PA import: YES` | We wrote the file; Playnite Achievements imports it **when Playnite next starts** — restart Playnite. |
-| `PA QUARANTINE` | PA's parser rejected our file — please report this with the file from `achievement_cache_quarantine`. |
-| `PA plugin dir … NOT FOUND` | Playnite Achievements isn't installed (or never started) — the sync skips exports and shows an error notification. |
-| `Fingerprint recorded: yes` | Unlocks unchanged since the last write — PA should already have them; if not, restart Playnite to trigger the import. |
+| `Hydra match: NONE` | The game isn't matched to a Hydra entry. Playtime won't sync either. |
+| `Achievement files found: 0` | No achievement file was located on disk (including Steam cache files). Verify Hydra itself shows achievements for this game. |
+| `files found: N` but `Unlocks parsed: 0` | Files exist but contain no unlocked achievements (or an unsupported variant) — open the listed paths manually. |
+| `Cache file awaiting PA import: YES` | The file was written; restart Playnite to let Playnite Achievements import it. |
+| `PA QUARANTINE` | Playnite Achievements' parser rejected our file — please report this with the file from `achievement_cache_quarantine`. |
+| `PA plugin dir … NOT FOUND` | Playnite Achievements isn't installed (or never started) — exports are skipped with an error notification. |
+| `Fingerprint recorded: yes` | Unlocks unchanged since the last write — restart Playnite to trigger the import. |
 
 Also check `Add-ons → Extensions settings → Generic → Hydra Sync`: **Sync achievements** and
-**Write to Playnite Achievements** must be on. Every sync's notification now includes
-scan stats (`scanned …, files found for …, with unlocks in …`) — if those stay at 0,
-the issue is file discovery (first two rows above). Detailed per-game reasons are logged
-at Debug level in `%APPDATA%\Playnite\logs\Playnite.log` (search `HydraSync`).
+**Write to Playnite Achievements** must be on. Every sync notification includes scan stats
+(`scanned …, files found for …, with unlocks in …`) — if those stay at 0, the problem is file
+discovery (the first two rows above).
 
-## Windows test checklist
+### Only some games are syncing
 
-1. **Load** — install the `.pext`, start Playnite. Check
-   `Add-ons → Extensions settings → Generic` shows *Hydra Sync* (v1.9.0) with no error
-   banner, and
-   `%APPDATA%\Playnite\logs\Playnite.log` contains no `HydraSync` errors
-   (search for `HydraSync`).
-2. **Settings** — open the extension's settings; verify all toggles/fields render and
-   edits persist after OK + reopening, and the **Undo playtime changes…** button is present.
-   Confirm **Auto-sync** is **unchecked** on a fresh install.
-2b. **Auto-sync off (default)** — with Auto-sync unchecked, start Playnite and wait ~1 min:
-   no sync notification should appear. Only manual **Sync now** should sync.
-2c. **Auto-sync on** — enable Auto-sync (interval 1 min), save; the next timer pass should
-   fire without a Playnite restart (allow up to ~1 min). Disabling it and saving should stop
-   further automatic passes.
-2d. **Per-game sync** — right-click a synced game → `Hydra Sync` → `Sync playtime now`:
-    playtime updates for that game only, with a completion notification. Then
-    `Sync achievements now` and confirm only achievements changed. With **Auto-sync off**
-    and the global **Sync achievements** switch off, `Sync achievements now` should still
-    do its work (one-shot actions ignore the switches). Finally check the stored modes:
-    `Always sync: playtime only` moves the `(current)` label, a later `Sync now` from the
-    main menu leaves that game's achievements alone and says how many were skipped, and
-    `Always sync: playtime and achievements` clears the override. Multi-selections apply
-    to every selected game.
-3. **Manual sync** — main menu `@Hydra Sync → Sync now`. Expect a completion notification
-   (`Hydra Sync: … matched …, raised playtime on N game(s) (+X min), …`) or a "Hydra
-   database not found" notification when Hydra has never run. Verify detection works with
-   the DB in **either** `%APPDATA%\Hydra\hydra-db` **or** `%APPDATA%\hydralauncher\hydra-db`
-   (older Hydra installs) — no need to set the data folder in settings.
-4. **Playtime replace-if-larger (Hydra closed)** — pick a game where Hydra's total is
-   larger than Playnite's: note both values, sync → Playnite's value must **equal Hydra's
-   total exactly** (replaced, not added). Sync again → unchanged (idempotent). Pick a
-   game where Playnite's value is already larger → sync → untouched.
-5. **Undo** — after raising several games, open settings → **Undo playtime changes…** →
-   confirm. Every modified game must return to its pre-sync playtime (games previously
-   synced by the old additive build are restored approximately and labelled as such in
-   the notification). Sync again afterwards → the replace rule re-applies cleanly.
-6. **Playtime (Hydra running)** — repeat while Hydra is open (exercises the snapshot-copy
-   fallback). Play something in Hydra, wait for its playtime counter to tick, sync, verify
-   Hydra's new total lands in Playnite.
-7. **Achievements** — for a Steam game, ensure an achievement file exists on disk
-   (e.g. Goldberg:
-   `%APPDATA%\Goldberg SteamEmu Saves\<appid>\achievements.json`). Sync → verify
-   `%APPDATA%\Playnite\ExtensionsData\e6aad2c9-6e06-4d8d-ac55-ac3b252b5f7b\achievement_cache\<guid>.json`
-   appears (then disappears after PA import), get the "restart Playnite" notification,
-   restart, and confirm unlocks show in Playnite Achievements (provider *Steam*).
-8. **Idempotence** — sync twice more: the cache JSON must not be rewritten when nothing
-   changed (fingerprint match).
-9. **Non-Steam game** — a non-Steam game matched to Playnite by title with achievement
-   files in its folder (e.g. `SteamData\user_stats.ini`, or
-   `steam_settings\<appid>\achievements.json` + `steam_appid.txt`): sync → cache JSON
-   written with `"ProviderKey": "Manual"` → restart → unlocks visible in PA, **and**
-   PA's manual-achievement editing features for that game are still offered (an "Manual"
-   key does not lock the game as owned by another provider).
-2e. **HowLongToBeat off (default)** — with *Push playtime to HowLongToBeat* unchecked, sync a
-    game whose playtime was raised: no HowLongToBeat notification appears.
-2f. **HowLongToBeat on** — install and log into HowLongToBeat, link at least one game, then
-    enable the setting and sync. Expect a follow-up `Hydra Sync → HowLongToBeat: updated N`
-    notification for exactly the games whose playtime was raised, and the same value in
-    HowLongToBeat. Confirm a game carrying HowLongToBeat's ignore tag, or with no linked data,
-    is skipped rather than created. `Push playtime to HowLongToBeat now` works with the setting
-    off, and `Diagnose HowLongToBeat playtime sync…` explains the current state. With
-    HowLongToBeat not installed at all, one notification says it is unavailable and syncing is
-    otherwise unaffected.
-10. **No PA installed** — with PA absent, achievements sync should still run without
-    errors and only report "PA unavailable" internally; playtime unaffected.
-11. **Menu/notifications** — game context menu item works; error paths (bad Hydra dir in
-    settings) produce an error notification instead of a crash.
+Per-game modes narrow what syncs for individual games, and the global switches stay master
+switches (see [Per-game sync](#per-game-sync)). Right-click a game → `Hydra Sync` →
+`Always sync: playtime and achievements` clears the override; the sync notification reports
+how many games were skipped and why. The `Sync playtime now` / `Sync achievements now` /
+`Sync playtime & achievements now` items act on the selected games only and ignore both the
+switches and the stored mode.
+
+### HowLongToBeat isn't updating
+
+| Symptom | Cause / fix |
+|---|---|
+| No HowLongToBeat notification after a sync | **Push playtime to HowLongToBeat** is off by default — enable it in settings. |
+| "HowLongToBeat is not available …" | The extension isn't installed or not loaded yet. Install it, then use **Push playtime to HowLongToBeat now** or re-sync; Hydra Sync doesn't ship or require its DLL. |
+| "updated 0, skipped N" | Expected for signed-out accounts, games carrying HowLongToBeat's ignore tag, and games it has no data for. `Diagnose HowLongToBeat playtime sync…` says which. |
+| No push after a sync | Only games whose playtime the sync actually **raised** are pushed — that's intentional, so nothing is submitted needlessly. |
+| A very large sync pushed only some games | Capped at 25 games per sync; the notification says so. Sync again to continue. |
+
+### Errors and odd behaviour elsewhere
+
+- **Bad path in settings** — invalid folders produce an error notification, never a crash.
+- **Notifications stop appearing** — Playnite collapses repeated notifications under one icon;
+  click it to expand.
+- **Menu items look stale** — restart Playnite after updating the extension.
 
 ## Known limitations
 
