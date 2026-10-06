@@ -14,6 +14,10 @@ Playnite 10 · Windows · [Releases](https://github.com/cometmcisaac/hydra-playn
   keeps working across Hydra updates.
 - Optional: **Playnite Achievements** 4.x, if you want achievements to show up somewhere.
   Without it playtime sync still works and nothing else breaks.
+- Optional: **[HowLongToBeat](https://github.com/Lacro59/playnite-howlongtobeat-plugin)**, if
+  you want the playtime a sync raises submitted to your HowLongToBeat account as well. It has to
+  be installed and signed in; Hydra Sync never ships or requires it, and nothing else changes if
+  it isn't there. See [HowLongToBeat](#howlongtobeat).
 
 ## Install
 
