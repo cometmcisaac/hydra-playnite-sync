@@ -64,8 +64,9 @@ reserved for a large batch of work.
 ## Ship it: releases are fully automated, the manifest is the gate
 
 ```bash
-# 1. bump Version: in src/HydraSync/extension.yaml (see numbering above)  2. bump README version refs
-# 3. author .github/release-notes/vX.Y.Z.md from _template.md (CI uses it as the release body)
+# 1. bump Version: in src/HydraSync/extension.yaml (see numbering above)
+# 2. author .github/release-notes/vX.Y.Z.md from _template.md (CI uses it as the release body)
+#    (the README links to Releases instead of naming a version, so nothing to bump there)
 rm -f dist/HydraSync-<old-version>.pext          # package.sh only removes the current version
 ./scripts/package.sh
 git add -A && git commit -m "..." && git push origin main
@@ -153,6 +154,10 @@ Local clones have been living in the macOS temp dir; **re-clone if they're gone*
 
 ## Other references
 
-- `README.md` — user-facing feature/how-it-works/test-checklist documentation.
+- `README.md` — **user-facing only**: features, settings, how it works (behaviour level),
+  troubleshooting, limitations, contributor build commands. Everything internal (SDK quirks,
+  PA import internals, packaging rationale, state-file layout, version bump references) belongs
+  here, not there. Keep README free of class names, GUIDs of other extensions and file paths
+  that only matter to development.
 - `tests/` — harness (`Program.cs` sections 1-9), `PlayniteStubs.cs`, `fixtures/`.
 - `.github/release-notes/README.md` — how to cut a release, notes tone rules.
