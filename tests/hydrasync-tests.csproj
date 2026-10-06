@@ -22,15 +22,20 @@
     <!-- Production sources under test -->
     <Compile Include="../src/HydraSync/Hydra/*.cs" />
     <Compile Include="../src/HydraSync/Sync/PlaytimeSyncLogic.cs" />
+    <Compile Include="../src/HydraSync/Sync/PlaytimeMode.cs" />
     <Compile Include="../src/HydraSync/Sync/GameSyncMode.cs" />
     <Compile Include="../src/HydraSync/Achievements/LocalAchievementDefinitions.cs" />
     <Compile Include="../src/HydraSync/Achievements/SteamSchemaClient.cs" />
+    <Compile Include="../src/HydraSync/Achievements/PaPayloadMerge.cs" />
+    <Compile Include="../src/HydraSync/Achievements/SteamTitleSearchClient.cs" />
     <Compile Include="../src/HydraSync/Update/UpdateChecker.cs" />
     <Compile Include="../src/HydraSync/Integrations/HowLongToBeatBridge.cs" />
+    <Compile Include="../src/HydraSync/Integrations/PlayniteAchievementsBridge.cs" />
     <!-- Harness itself -->
     <Compile Include="Program.cs" />
     <Compile Include="PlayniteStubs.cs" />
     <Compile Include="FakeHowLongToBeat.cs" />
+    <Compile Include="FakePlayniteAchievements.cs" />
   </ItemGroup>
 
   <ItemGroup>

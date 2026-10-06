@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media;
+using HydraSync.Sync;
 
 namespace HydraSync
 {
@@ -21,14 +22,19 @@ namespace HydraSync
             panel.Children.Add(Check(nameof(PluginSettings.SyncAchievements),
                 "Sync achievements from achievement files on disk"));
             panel.Children.Add(Check(nameof(PluginSettings.WriteToPlayniteAchievements),
-                "Export achievements to Playnite Achievements (imports on Playnite restart)"));
+                "Export achievements to Playnite Achievements"));
+            panel.Children.Add(Check(nameof(PluginSettings.ImportAchievementsImmediately),
+                "Show new achievements without restarting Playnite (needs Playnite Achievements)"));
+            panel.Children.Add(Check(nameof(PluginSettings.MergeWithPlayniteAchievements),
+                "Merge with existing Playnite Achievements data instead of replacing it"));
             panel.Children.Add(Check(nameof(PluginSettings.FetchSteamSchema),
-                "Fetch achievement names/descriptions from Steam"));
+                "Fetch achievement names/descriptions from Steam (by AppID, or by title when unknown)"));
             panel.Children.Add(Check(nameof(PluginSettings.CheckForUpdates),
                 "Check for Hydra Sync updates at startup (GitHub releases)"));
             panel.Children.Add(Check(nameof(PluginSettings.PushPlaytimeToHowLongToBeat),
                 "After raising a game's playtime, have HowLongToBeat submit the new total"));
 
+            panel.Children.Add(Row("Playtime:", PlaytimeModeBox()));
             panel.Children.Add(Check(nameof(PluginSettings.AutoSync),
                 "Auto-sync (once shortly after Playnite starts, then on the interval below)"));
             panel.Children.Add(Row("Sync interval (minutes):", NumberBox()));
@@ -44,11 +50,13 @@ namespace HydraSync
                 Text =
                     "Leave the Hydra data folder empty to auto-detect %APPDATA%\\Hydra\\hydra-db or %APPDATA%\\hydralauncher\\hydra-db. " +
                     "Only games already in your Playnite library are matched - Hydra-only titles are never imported. " +
-                    "Playtime is never added on top: Hydra's total only replaces Playnite's value when it is higher. " +
+                    "By default playtime is never added on top: Hydra's total only replaces Playnite's value when it " +
+                    "is higher. Pick the other playtime mode above to add Hydra's new time instead. " +
                     "Auto-sync is off by default - until you enable it, syncing only runs when you pick " +
                     "\"Sync now\" from the @Hydra Sync menu. " +
                     "The HowLongToBeat option is off by default too; it needs HowLongToBeat installed and " +
-                    "logged in, and only pushes games whose playtime the sync actually raised.",
+                    "logged in, and only pushes games whose playtime the sync actually raised. " +
+                    "Achievements need Playnite Achievements; without it they are written but not shown.",
             };
             panel.Children.Add(note);
 
@@ -110,9 +118,43 @@ namespace HydraSync
             return row;
         }
 
+        private static ComboBox PlaytimeModeBox()
+        {
+            var box = new ComboBox
+            {
+                Width = 320,
+                VerticalAlignment = VerticalAlignment.Center,
+                ToolTip = "Hydra wins: Playnite's playtime is replaced only when Hydra's total is higher. " +
+                          "Add Hydra's playtime: only the time Hydra gained since the last sync is added, " +
+                          "leaving Playnite's own sessions alone (the first sync records a baseline).",
+            };
+
+            box.Items.Add(new PlaytimeModeItem
+            {
+                Mode = PlaytimeMode.HydraWins,
+                Label = "Hydra wins (replace when larger)",
+            });
+            box.Items.Add(new PlaytimeModeItem
+            {
+                Mode = PlaytimeMode.AddHydraIncrements,
+                Label = "Add Hydra's playtime since the last sync",
+            });
+
+            box.DisplayMemberPath = "Label";
+            box.SelectedValuePath = "Mode";
+            box.SetBinding(ComboBox.SelectedValueProperty,
+                new Binding(nameof(PluginSettings.PlaytimeMode))
+                {
+                    UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged,
+                });
+
+            return box;
+        }
+
         private static TextBox NumberBox()
         {
             var box = new TextBox { Width = 60, VerticalAlignment = VerticalAlignment.Center };
+            box.ToolTip = "Only used when auto-sync is enabled.";
             box.SetBinding(TextBox.TextProperty, new Binding(nameof(PluginSettings.SyncIntervalMinutes))
             {
                 UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged,
@@ -133,6 +175,17 @@ namespace HydraSync
                 UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged,
             });
             return box;
+        }
+
+        private class PlaytimeModeItem
+        {
+            public PlaytimeMode Mode { get; set; }
+            public string Label { get; set; }
+
+            public override string ToString()
+            {
+                return Label;
+            }
         }
 
         private static TextBox WebApiKeyBox()

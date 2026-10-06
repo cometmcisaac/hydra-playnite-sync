@@ -39,6 +39,7 @@ namespace HydraSync
         private Timer _timer;
         private int _syncRunning;
         private bool _paWarned;
+        private bool _paImportPendingWarned;
         private bool _hltbWarned;
         private ILogger _log;
 
@@ -266,7 +267,8 @@ namespace HydraSync
                         "hydrasync-done-selected",
                         $"Hydra Sync ({label}): {selectionLabel} - raised playtime on " +
                         $"{summary.PlaytimeRaisedCount} game(s) (+{FormatMinutes(summary.PlaytimeAddedSeconds)}), " +
-                        $"{summary.AchievementsWritten} achievement set(s) updated.",
+                        $"{summary.AchievementsWritten} achievement set(s) updated" +
+                        AchievementImportSuffix(summary) + ".",
                         NotificationType.Info);
                 }
 
@@ -567,8 +569,9 @@ namespace HydraSync
                             var pending = Path.Combine(PaCacheWriter.CacheDir, game.Id.ToString("D") + ".json");
                             sb.AppendLine("Cache file awaiting PA import: " +
                                 (File.Exists(pending)
-                                    ? "YES - restart Playnite so Playnite Achievements can import it"
-                                    : "no (already imported, or not written yet)"));
+                                    ? "YES - Playnite Achievements hasn't applied it yet (a sync applies it " +
+                                      "immediately; a Playnite restart picks it up otherwise)"
+                                    : "no (already applied/imported, or not written yet)"));
 
                             var quarDir = Path.Combine(PaCacheWriter.PaPluginDir, "achievement_cache_quarantine");
                             var quarantined = Directory.Exists(quarDir) &&
@@ -590,10 +593,19 @@ namespace HydraSync
                     sb.AppendLine();
                     sb.AppendLine("PA plugin dir: " + PaCacheWriter.PaPluginDir +
                         (PaCacheWriter.IsAvailable ? "" : "  (NOT FOUND - is Playnite Achievements installed?)"));
+                    sb.AppendLine("Apply without restart: " +
+                        (Settings.ImportAchievementsImmediately ? "on" : "off") +
+                        (PlayniteAchievementsBridge.IsAvailable
+                            ? "  (Playnite Achievements reached - data is applied as soon as it is written)"
+                            : "  (extension not reachable: " + PlayniteAchievementsBridge.UnavailableReason +
+                              " - Playnite imports the data at its next start)"));
+                    sb.AppendLine("Merge with existing data: " +
+                        (Settings.MergeWithPlayniteAchievements ? "on" : "off"));
+                    sb.AppendLine("Playtime mode: " + PlaytimeModeLogic.Describe(Settings.PlaytimeMode));
                     sb.AppendLine();
                     sb.AppendLine("Note: Playnite itself has no achievement UI. Unlocks appear in " +
-                        "Playnite Achievements (game view / theme panel) only after PA imports the " +
-                        "cache file, which happens when Playnite next starts.");
+                        "Playnite Achievements (game view / theme panel) as soon as the data is applied, " +
+                        "or when Playnite next starts if the extension couldn't be reached.");
 
                     var report = sb.ToString();
                     RunOnUi(() => PlayniteApi.Dialogs.ShowMessage(report, "Hydra Sync - Achievement diagnostics"));
@@ -737,7 +749,9 @@ namespace HydraSync
                         $"raised playtime on {summary.PlaytimeRaisedCount} game(s) (+{FormatMinutes(summary.PlaytimeAddedSeconds)}), " +
                         $"{summary.AchievementsWritten} achievement set(s) updated " +
                         $"(scanned {summary.AchievementGamesScanned}, files found for {summary.AchievementGamesWithFiles}, " +
-                        $"with unlocks in {summary.AchievementGamesWithUnlocks})" +
+                        $"with unlocks in {summary.AchievementGamesWithUnlocks}" +
+                        AchievementImportSuffix(summary, ", ") + ")" +
+                        BaselineSuffix(summary) +
                         PerGameOverrideSuffix(summary) + ".",
                         NotificationType.Info);
                 }
@@ -756,13 +770,14 @@ namespace HydraSync
                     }
                 }
 
-                if (summary.AchievementsWritten > 0 && !_state.NotifiedPaImport)
+                // Data that couldn't be handed to Playnite Achievements right away is picked up
+                // by its importer on the next Playnite start - say so once per session.
+                if (summary.PaImportPending && summary.AchievementsWritten > 0 && !_paImportPendingWarned)
                 {
-                    _state.NotifiedPaImport = true;
-                    _state.Save(StatePath);
+                    _paImportPendingWarned = true;
                     Notify("hydrasync-paimport",
-                        "Hydra Sync wrote achievements for Playnite Achievements. " +
-                        "Restart Playnite once so the extension imports them.",
+                        "Hydra Sync wrote achievements for Playnite Achievements but couldn't apply " +
+                        "them immediately. Restart Playnite once so the extension imports them.",
                         NotificationType.Info);
                 }
 
@@ -846,9 +861,10 @@ namespace HydraSync
             try
             {
                 var confirm = PlayniteApi.Dialogs.ShowMessage(
-                    "Restore Playnite playtime to what it was before Hydra Sync changed it?\n\n" +
-                    "Only playtime is affected - achievements stay as they are. The next sync " +
-                    "applies the replace-if-larger rule again from a clean slate.",
+                    "Remove the playtime Hydra Sync added?\n\n" +
+                    "Only this plugin's own contribution is removed - anything Playnite recorded " +
+                    "after a sync is kept. Achievements are not affected, and you can sync again " +
+                    "at any time.",
                     "Hydra Sync",
                     System.Windows.MessageBoxButton.YesNo);
                 if (confirm != System.Windows.MessageBoxResult.Yes) return;
@@ -857,6 +873,7 @@ namespace HydraSync
 
                 var updates = new List<Game>();
                 var approximate = 0;
+                ulong totalRemoved = 0;
 
                 foreach (var kv in _state.Games)
                 {
@@ -873,18 +890,25 @@ namespace HydraSync
                     var recordedAddedMs = st.LastHydraMs > 0
                         ? st.LastHydraMs + Math.Max(0, st.MsCarry)
                         : 0;
-                    var restored = PlaytimeSyncLogic.Restore(
-                        game.Playtime, st.OriginalPlaytimeSecs, recordedAddedMs, out var wasApprox);
+
+                    // Only what this plugin contributed is removed, so playtime Playnite
+                    // recorded after the sync survives the undo.
+                    var restored = PlaytimeSyncLogic.RestoreApplied(
+                        game.Playtime, st.OriginalPlaytimeSecs, st.LastAppliedPlaytimeSecs,
+                        recordedAddedMs, out var wasApprox);
 
                     if (restored != game.Playtime)
                     {
+                        var removed = game.Playtime - restored;
                         game.Playtime = restored;
                         updates.Add(game);
+                        totalRemoved += removed;
                         if (wasApprox) approximate++;
                     }
 
-                    // Clear playtime bookkeeping; keep AchievementFingerprint.
-                    st.OriginalPlaytimeSecs = null;
+                    // The contribution is gone; the original stays so a later sync can be
+                    // undone just as precisely.
+                    st.LastAppliedPlaytimeSecs = null;
                     st.LastHydraMs = 0;
                     st.MsCarry = 0;
                 }
@@ -898,9 +922,11 @@ namespace HydraSync
 
                 Notify("hydrasync-undo", updates.Count == 0
                         ? "Hydra Sync: no playtime changes to undo."
-                        : $"Hydra Sync: playtime restored for {updates.Count} game(s)" +
+                        : $"Hydra Sync: removed {FormatMinutes((long)totalRemoved)} of synced playtime " +
+                          $"from {updates.Count} game(s)" +
                           (approximate > 0 ? $" ({approximate} recovered approximately)" : "") +
-                          ". The next sync applies the replace-if-larger rule again.",
+                          $". Anything Playnite recorded after the sync was kept. Playtime can be " +
+                          "synced again whenever you like.",
                         NotificationType.Info);
             }
             catch (Exception ex)
@@ -908,6 +934,35 @@ namespace HydraSync
                 _log?.Error(ex, "HydraSync: undo failed");
                 Notify("hydrasync-undo-error", "Hydra Sync undo failed: " + ex.Message, NotificationType.Error);
             }
+        }
+
+        /// <summary>
+        /// Notes how much of the achievement data reached Playnite Achievements without a
+        /// restart, and how much was merged with data it already had.
+        /// </summary>
+        private static string AchievementImportSuffix(SyncSummary summary, string separator = "; ")
+        {
+            var parts = new List<string>();
+            if (summary.AchievementsApplied > 0)
+            {
+                parts.Add("applied without a restart: " + summary.AchievementsApplied);
+            }
+
+            if (summary.AchievementsMerged > 0)
+            {
+                parts.Add("merged with existing data: " + summary.AchievementsMerged);
+            }
+
+            if (parts.Count == 0) return string.Empty;
+            return separator + string.Join(", ", parts);
+        }
+
+        /// <summary>Explains an additive-mode pass that only recorded baselines.</summary>
+        private static string BaselineSuffix(SyncSummary summary)
+        {
+            if (summary.PlaytimeBaselinesSet <= 0) return string.Empty;
+            return $"; additive mode: baseline recorded for {summary.PlaytimeBaselinesSet} game(s) " +
+                   "(no playtime added yet)";
         }
 
         /// <summary>

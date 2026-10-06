@@ -19,10 +19,26 @@ namespace HydraSync.Sync
 
         /// <summary>
         /// Playtime (seconds) the game had before this plugin first modified it —
-        /// the value "Undo playtime changes" restores. Null when the plugin has
+        /// the value "Undo playtime changes" falls back to. Null when the plugin has
         /// never changed this game's playtime (or after an undo).
         /// </summary>
         public ulong? OriginalPlaytimeSecs { get; set; }
+
+        /// <summary>
+        /// Playtime (seconds) this plugin last wrote to the game. Together with
+        /// <see cref="OriginalPlaytimeSecs"/> this gives the exact amount the sync
+        /// contributed, so undo removes only that much and keeps anything Playnite
+        /// recorded afterwards. Null when the plugin hasn't written playtime since this
+        /// field existed (undo then falls back to the recorded added amount).
+        /// </summary>
+        public ulong? LastAppliedPlaytimeSecs { get; set; }
+
+        /// <summary>
+        /// Hydra's cumulative playtime (ms) observed during the last sync of this game.
+        /// Additive playtime mode adds only the difference against it, which is what keeps
+        /// already-synced games from being doubled. Null until the first sync records it.
+        /// </summary>
+        public long? PlaytimeBaselineHydraMs { get; set; }
 
         /// <summary>Hash of the last achievement payload written for this game (skip unchanged rewrites).</summary>
         public string AchievementFingerprint { get; set; }
@@ -44,8 +60,6 @@ namespace HydraSync.Sync
         /// </summary>
         public Dictionary<string, GameSyncMode> GameModes { get; set; } =
             new Dictionary<string, GameSyncMode>(StringComparer.OrdinalIgnoreCase);
-
-        public bool NotifiedPaImport { get; set; }
 
         public DateTime? LastSyncUtc { get; set; }
 

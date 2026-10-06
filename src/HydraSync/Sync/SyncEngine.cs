@@ -7,6 +7,8 @@ using System.Text;
 using System.Threading.Tasks;
 using HydraSync.Achievements;
 using HydraSync.Hydra;
+using HydraSync.Integrations;
+using Newtonsoft.Json.Linq;
 using Playnite.SDK;
 using Playnite.SDK.Models;
 
@@ -25,6 +27,21 @@ namespace HydraSync.Sync
         public int AchievementGamesWithUnlocks;
         public bool PaUnavailable;
         public string Error;
+
+        /// <summary>Achievement sets handed to Playnite Achievements without a restart.</summary>
+        public int AchievementsApplied;
+
+        /// <summary>Achievement sets that were merged with data Playnite Achievements had.</summary>
+        public int AchievementsMerged;
+
+        /// <summary>
+        /// True when data was written but Playnite Achievements could not import it right away,
+        /// so it will only be picked up on the next Playnite start.
+        /// </summary>
+        public bool PaImportPending;
+
+        /// <summary>Games that only recorded an additive-playtime baseline this run.</summary>
+        public int PlaytimeBaselinesSet;
 
         /// <summary>Matched games whose playtime was skipped due to a per-game override.</summary>
         public int PlaytimeSkipped;
@@ -198,10 +215,36 @@ namespace HydraSync.Sync
 
             var hydraSecs = PlaytimeSyncLogic.HydraSeconds(h.PlayTimeInMilliseconds);
             var dirty = false;
+            ulong newPlaytime = 0;
 
-            // Replace-if-larger: Hydra's cumulative total replaces Playnite's playtime only
-            // when it is strictly greater; otherwise Playnite's value stays untouched.
-            if (PlaytimeSyncLogic.ShouldRaise(g.Playtime, hydraSecs))
+            if (_settings.PlaytimeMode == PlaytimeMode.AddHydraIncrements)
+            {
+                // Additive: only Hydra's gain since the last sync of this game is added, so an
+                // already-synced game is never doubled. The first pass records a baseline.
+                var plan = PlaytimeSyncLogic.PlanAdditive(
+                    g.Playtime, h.PlayTimeInMilliseconds,
+                    st?.PlaytimeBaselineHydraMs != null, st?.PlaytimeBaselineHydraMs ?? 0);
+
+                if (plan.BaselineOnly)
+                {
+                    summary.PlaytimeBaselinesSet++;
+                }
+
+                if (plan.ShouldApply)
+                {
+                    newPlaytime = plan.NewPlaytime;
+                    summary.PlaytimeAddedSeconds += plan.AddedSeconds;
+                }
+            }
+            else if (PlaytimeSyncLogic.ShouldRaise(g.Playtime, hydraSecs))
+            {
+                // Replace-if-larger: Hydra's cumulative total replaces Playnite's playtime only
+                // when it is strictly greater; otherwise Playnite's value stays untouched.
+                newPlaytime = (ulong)hydraSecs;
+                summary.PlaytimeAddedSeconds += hydraSecs - (long)g.Playtime;
+            }
+
+            if (newPlaytime > 0)
             {
                 if (st == null || st.OriginalPlaytimeSecs == null)
                 {
@@ -212,10 +255,10 @@ namespace HydraSync.Sync
                     st.OriginalPlaytimeSecs = PlaytimeSyncLogic.CaptureOriginal(g.Playtime, recordedAddedMs);
                 }
 
-                summary.PlaytimeAddedSeconds += (long)hydraSecs - (long)g.Playtime;
                 summary.PlaytimeRaisedCount++;
                 summary.PlaytimeRaisedGameIds.Add(g.Id);
-                g.Playtime = (ulong)hydraSecs;
+                st.LastAppliedPlaytimeSecs = newPlaytime;
+                g.Playtime = newPlaytime;
                 dirty = true;
             }
 
@@ -229,6 +272,8 @@ namespace HydraSync.Sync
 
             st = st ?? new HydraGameState();
             st.PlayniteGameId = g.Id.ToString("D");
+            // Additive mode needs Hydra's total as of this sync to compute the next delta.
+            st.PlaytimeBaselineHydraMs = h.PlayTimeInMilliseconds;
             // LastHydraMs/MsCarry are no longer written; they are only read as a recorded
             // added amount so an entry without an original can still be undone.
             _state.Games[key] = st;
@@ -280,14 +325,22 @@ namespace HydraSync.Sync
             // user provided a key, (3) store appdetails (legacy; now returns a highlighted-only
             // object for most apps, so usually a no-op).
             var schema = ResolveLocalSchema(executablePath, g.InstallDirectory, appId);
-            if ((schema == null || !schema.HasAchievements) && _settings.FetchSteamSchema && appId > 0)
+            if ((schema == null || !schema.HasAchievements) && _settings.FetchSteamSchema && appId <= 0)
             {
-                schema = await SteamSchemaClient.GetFromWebApiAsync(
-                    appId, _settings.SteamWebApiKey, _schemaCacheDir, _log);
-                if (schema == null || !schema.HasAchievements)
+                // No AppID anywhere (a non-Steam Hydra entry with no steam_appid.txt in its
+                // folder). Searching the store by title recovers names/icons for the games that
+                // are on Steam; anything not close enough to the title is ignored.
+                var byTitle = await SteamTitleSearchClient.FindAsync(
+                    FirstNonEmpty(g.Name, h.Title), _schemaCacheDir, _log);
+                if (byTitle != null && byTitle.AppId > 0)
                 {
-                    schema = await SteamSchemaClient.GetAsync(appId, _schemaCacheDir, _log);
+                    appId = byTitle.AppId;
+                    schema = await FetchSchemaAsync(appId);
                 }
+            }
+            else if ((schema == null || !schema.HasAchievements) && _settings.FetchSteamSchema)
+            {
+                schema = await FetchSchemaAsync(appId);
             }
 
             // Build the payload: schema order first (canonical names), then unlock-only extras.
@@ -361,14 +414,41 @@ namespace HydraSync.Sync
             }
 
             var providerGameKey = appId > 0 ? appId.ToString() : (FirstNonEmpty(h.ObjectId, h.Key) ?? "");
+
+            // Merge with whatever Playnite Achievements already has for this game so a write
+            // never throws away another provider's entries or an unlock it knows about.
+            JObject existing = null;
+            if (_settings.MergeWithPlayniteAchievements)
+            {
+                existing = PlayniteAchievementsBridge.TryReadGameData(g.Id, _log);
+            }
+
             try
             {
-                PaCacheWriter.Write(g, appId, providerGameKey, details, providerKey, _log);
+                PaCacheWriter.Write(g, appId, providerGameKey, details, providerKey, existing, _log);
             }
             catch (Exception ex)
             {
                 _log?.Error(ex, $"HydraSync: failed writing PA cache for {g.Name}");
                 return;
+            }
+
+            if (existing != null)
+            {
+                summary.AchievementsMerged++;
+            }
+
+            // Import it right away instead of waiting for the next Playnite start. Falls back
+            // silently: without the bridge the file is picked up at the next start, exactly as
+            // before.
+            if (_settings.ImportAchievementsImmediately &&
+                PlayniteAchievementsBridge.ImportNow(g.Id, _runOnUi, _log) == PaImportResult.Imported)
+            {
+                summary.AchievementsApplied++;
+            }
+            else
+            {
+                summary.PaImportPending = true;
             }
 
             st = st ?? _state.GetOrAdd(h.Key);
@@ -414,6 +494,24 @@ namespace HydraSync.Sync
                 }
             }
             return unlocks;
+        }
+
+        /// <summary>
+        /// Network schema sources for an AppID: the Steam Web API when the user provided a key
+        /// (full schema), then the store appdetails API as a fallback.
+        /// </summary>
+        private async Task<SteamSchema> FetchSchemaAsync(int appId)
+        {
+            if (appId <= 0) return null;
+
+            var schema = await SteamSchemaClient.GetFromWebApiAsync(
+                appId, _settings.SteamWebApiKey, _schemaCacheDir, _log);
+            if (schema == null || !schema.HasAchievements)
+            {
+                schema = await SteamSchemaClient.GetAsync(appId, _schemaCacheDir, _log);
+            }
+
+            return schema;
         }
 
         /// <summary>First parseable local definitions file (game-dir steam_settings), or null.</summary>

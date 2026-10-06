@@ -1,7 +1,7 @@
 Id: A76358E9-BFA2-4189-B6F3-2307EA4E217B
 Name: Hydra Sync
 Author: Hydra Sync contributors
-Version: 1.9.1
+Version: 1.10.0
 Module: HydraSync.dll
 Type: GenericPlugin
 Icon: icon.png

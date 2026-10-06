@@ -5,6 +5,8 @@ using System.Linq;
 using HydraSync.Sync;
 using HydraSync.Hydra;
 using HydraSync.Achievements;
+using HydraSync.Integrations;
+using Newtonsoft.Json.Linq;
 using HltbResult = HydraSync.Integrations.HltbPushResult;
 
 class Program
@@ -532,6 +534,272 @@ class Program
                 UnavailableReason = "not installed",
             }) == "not installed",
             "Describe() surfaces the unavailable reason");
+
+        // ------------------------------------------------------------------ 11. smart undo
+        Console.WriteLine();
+        Console.WriteLine("== 11. Smarter undo (only removes our own contribution) ==");
+
+        // original=100, we last applied 400 (added 300s), Playnite added 50 more since.
+        ulong u = PlaytimeSyncLogic.RestoreApplied(450, 100, 400, 0, out bool ap);
+        Check(u == 150 && !ap, "undo keeps playtime recorded after the sync", $"(got {u})");
+
+        u = PlaytimeSyncLogic.RestoreApplied(400, 100, 400, 0, out ap);
+        Check(u == 100 && !ap, "undo with nothing added since restores the original", $"(got {u})");
+
+        u = PlaytimeSyncLogic.RestoreApplied(450, null, 400, 0, out ap);
+        Check(u == 450 && !ap, "undo without a recorded original is a no-op", $"(got {u})");
+
+        u = PlaytimeSyncLogic.RestoreApplied(450, 100, null, 0, out ap);
+        Check(u == 100 && !ap, "undo without a recorded applied value falls back to the original", $"(got {u})");
+
+        u = PlaytimeSyncLogic.RestoreApplied(1300, null, null, 800_000, out ap);
+        Check(u == 500 && ap, "undo falls back to the recorded added amount", $"(got {u}, approx={ap})");
+
+        // Playtime is now lower than what the sync contributed (hand-edited): fall back to the
+        // original and never raise playtime above what is there.
+        u = PlaytimeSyncLogic.RestoreApplied(120, 100, 400, 0, out ap);
+        Check(u == 100 && ap, "undo below the contribution falls back to the original", $"(got {u}, approx={ap})");
+        u = PlaytimeSyncLogic.RestoreApplied(50, 100, 400, 0, out ap);
+        Check(u == 50 && ap, "undo never raises playtime", $"(got {u})");
+
+        u = PlaytimeSyncLogic.RestoreApplied(900, 100, 100, 0, out ap);
+        Check(u == 900 && !ap, "undo when nothing was ever added is a no-op", $"(got {u})");
+
+        // ------------------------------------------------------- 12. additive playtime mode
+        Console.WriteLine();
+        Console.WriteLine("== 12. Additive playtime mode ==");
+
+        var plan = PlaytimeSyncLogic.PlanAdditive(500, 3_600_000, hasBaseline: false, baselineHydraMs: 0);
+        Check(plan.BaselineOnly && !plan.ShouldApply, "additive: first pass records a baseline only");
+
+        plan = PlaytimeSyncLogic.PlanAdditive(500, 3_600_000, hasBaseline: true, baselineHydraMs: 3_600_000);
+        Check(!plan.ShouldApply && !plan.BaselineOnly, "additive: no new Hydra playtime → no change");
+
+        plan = PlaytimeSyncLogic.PlanAdditive(500, 3_600_000, hasBaseline: true, baselineHydraMs: 3_600_000 - 600_000);
+        Check(plan.ShouldApply && plan.NewPlaytime == 1100 && plan.AddedSeconds == 600,
+            "additive: adds only the gain since the baseline", $"(got {plan.NewPlaytime}, +{plan.AddedSeconds})");
+
+        plan = PlaytimeSyncLogic.PlanAdditive(500, 3_600_000, hasBaseline: true, baselineHydraMs: 3_600_000 + 600_000);
+        Check(plan.BaselineOnly && !plan.ShouldApply, "additive: a reset Hydra total re-baselines");
+
+        plan = PlaytimeSyncLogic.PlanAdditive(500, 3_600_500, hasBaseline: true, baselineHydraMs: 3_600_000);
+        Check(!plan.ShouldApply, "additive: sub-second gain changes nothing", $"(+{plan.AddedSeconds})");
+
+        plan = PlaytimeSyncLogic.PlanAdditive(0, -5, hasBaseline: false, baselineHydraMs: 0);
+        Check(plan.BaselineOnly && plan.BaselineHydraMs == 0, "additive: negative Hydra total is treated as 0");
+
+        Check(PlaytimeModeLogic.Describe(PlaytimeMode.HydraWins) == "Hydra wins (replace when larger)",
+            "playtime mode label: Hydra wins");
+        Check(PlaytimeModeLogic.Describe(PlaytimeMode.AddHydraIncrements).StartsWith("add Hydra"),
+            "playtime mode label: additive");
+
+        // --------------------------------------------------- 13. PA payload merge
+        Console.WriteLine();
+        Console.WriteLine("== 13. Achievement payload merge (no data loss) ==");
+
+        JObject Entry(string apiName, bool unlocked, string display = null, string desc = null, string icon = null)
+        {
+            return new JObject
+            {
+                ["ApiName"] = apiName,
+                ["Unlocked"] = unlocked,
+                ["DisplayName"] = display,
+                ["Description"] = desc,
+                ["UnlockedIconPath"] = icon,
+            };
+        }
+
+        var mine = new JObject
+        {
+            ["ProviderKey"] = "Steam",
+            ["LibrarySourceName"] = "Hydra",
+            ["GameName"] = "Test Game",
+            ["AppId"] = 620,
+            ["ProviderGameKey"] = "620",
+            ["HasAchievements"] = true,
+            ["PlayniteGameId"] = "11111111-1111-1111-1111-111111111111",
+            ["LastUpdatedUtc"] = "2026-01-01T00:00:00Z",
+            ["Achievements"] = new JArray
+            {
+                Entry("A", true, "Alpha", "first", "http://icon/a.png"),
+                Entry("B", false, "Beta"),
+            },
+        };
+
+        var theirs = new JObject
+        {
+            ["ProviderKey"] = "Steam",
+            ["GameName"] = "Test Game",
+            ["AppId"] = 620,
+            ["Achievements"] = new JArray
+            {
+                Entry("A", true, "Old Alpha name", "stale description"),
+                Entry("C", true, "Gamma", null, "http://icon/c.png"),
+            },
+        };
+
+        var merged = PaPayloadMerge.Merge(mine, theirs);
+        var arr = (JArray)merged["Achievements"];
+        Check((string)merged["ProviderKey"] == "Steam", "merge keeps the existing provider key");
+        Check((int)merged["AppId"] == 620, "merge keeps the app id");
+        Check(arr.Count == 3, "merge keeps entries we don't know about", $"(got {arr.Count})");
+
+        var aEntry = arr.Children<JObject>().First(e => (string)e["ApiName"] == "A");
+        Check((string)aEntry["DisplayName"] == "Alpha",
+            "same source: our fresher name wins", $"(got {aEntry["DisplayName"]})");
+        Check((string)aEntry["Description"] == "first", "same source: our description wins");
+
+        var bEntry = arr.Children<JObject>().First(e => (string)e["ApiName"] == "B");
+        Check((string)bEntry["Unlocked"] == "False", "new entries are added as locked");
+
+        var cEntry = arr.Children<JObject>().First(e => (string)e["ApiName"] == "C");
+        Check((string)cEntry["Unlocked"] == "True", "entries we have no data for stay unlocked");
+
+        // Never downgrade an unlock the extension knows about.
+        var downgradeOurs = new JObject
+        {
+            ["ProviderKey"] = "Manual",
+            ["GameName"] = "Test Game",
+            ["Achievements"] = new JArray { Entry("C", false, "Gamma") },
+        };
+        merged = PaPayloadMerge.Merge(downgradeOurs, theirs);
+        cEntry = ((JArray)merged["Achievements"]).Children<JObject>()
+            .First(e => (string)e["ApiName"] == "C");
+        Check((string)cEntry["Unlocked"] == "True", "an unlock is never downgraded to locked");
+        Check((string)merged["ProviderKey"] == "Steam",
+            "another provider's key is not replaced by ours", $"(got {merged["ProviderKey"]})");
+        Check((string)cEntry["DisplayName"] == "Gamma",
+            "another provider's names are kept, ours only fills gaps");
+
+        var emptyOurs = new JObject
+        {
+            ["ProviderKey"] = "Steam",
+            ["Achievements"] = new JArray { Entry("C", true, "Gamma") },
+        };
+        merged = PaPayloadMerge.Merge(emptyOurs, theirs);
+        cEntry = ((JArray)merged["Achievements"]).Children<JObject>()
+            .First(e => (string)e["ApiName"] == "C");
+        Check((string)cEntry["DisplayName"] == "Gamma",
+            "different source: existing names are not overwritten by empties");
+
+        var unmapped = new JObject { ["ProviderKey"] = "Unmapped", ["GameName"] = "" };
+        merged = PaPayloadMerge.Merge(mine, unmapped);
+        Check((string)merged["ProviderKey"] == "Steam", "an Unmapped placeholder takes our key");
+        Check((string)merged["GameName"] == "Test Game", "a missing game name is filled in");
+
+        Check(ReferenceEquals(PaPayloadMerge.Merge(mine, null), mine), "no existing data → payload unchanged");
+        Check(((JArray)PaPayloadMerge.Merge(mine, null)["Achievements"]).Count == 2,
+            "no existing data → no extra entries");
+
+        // --------------------------------------------------- 14. Steam title search guard
+        Console.WriteLine();
+        Console.WriteLine("== 14. Steam title search similarity guard ==");
+
+        Check(SteamTitleSearchClient.Normalize("Hollow Knight™") == "hollow knight",
+            "normalize strips trademark symbols");
+        Check(SteamTitleSearchClient.Similarity("hollow knight", "hollow knight") == 1.0,
+            "identical titles score 1.0");
+        Check(SteamTitleSearchClient.Similarity("hollow knight", "hollow knight silksong") < 0.9,
+            "a sequel is rejected", $"({SteamTitleSearchClient.Similarity("hollow knight", "hollow knight silksong")})");
+        Check(SteamTitleSearchClient.Similarity("the witcher 3", "witcher 3 the") >= 0.9,
+            "word order doesn't matter");
+        Check(SteamTitleSearchClient.Similarity("portal", "portal 2") < 0.9, "a numbered sequel is rejected");
+        Check(SteamTitleSearchClient.Similarity("", "portal") == 0, "empty titles score 0");
+        Check(SteamTitleSearchClient.Similarity("a", "a") == 1.0, "single-word titles work");
+
+        // --------------------------------------------------- 15. Playnite Achievements bridge
+        Console.WriteLine();
+        Console.WriteLine("== 15. Playnite Achievements bridge (reflection) ==");
+
+        var paGameId = Guid.NewGuid();
+        Action<Action> runInline = action => action();
+
+        // Unavailable: no extension loaded at all.
+        PlayniteAchievementsBridge.ResetForTests();
+        PlayniteAchievementsBridge.AssemblyResolver = name => null;
+        Check(!PlayniteAchievementsBridge.IsAvailable, "bridge: missing extension → unavailable");
+        Check(!string.IsNullOrEmpty(PlayniteAchievementsBridge.UnavailableReason),
+            "bridge: unavailable has a reason", $"({PlayniteAchievementsBridge.UnavailableReason})");
+        Check(PlayniteAchievementsBridge.ImportNow(paGameId, runInline, null) ==
+            PaImportResult.Unavailable, "bridge: import reports unavailable");
+        Check(PlayniteAchievementsBridge.TryReadGameData(paGameId, null) == null,
+            "bridge: read without the extension is null");
+
+        // Extension present but not constructed yet.
+        PlayniteAchievementsBridge.ResetForTests();
+        PlayniteAchievementsBridge.AssemblyResolver = name => typeof(PlayniteAchievements.PlayniteAchievementsPlugin).Assembly;
+        PlayniteAchievementsBridge.PluginTypeResolver = asm => asm.GetType("PlayniteAchievements.PlayniteAchievementsPlugin");
+        Check(!PlayniteAchievementsBridge.IsAvailable, "bridge: not-constructed extension → unavailable");
+        Check(PlayniteAchievementsBridge.ImportNow(paGameId, runInline, null) ==
+            PaImportResult.Unavailable,
+            "bridge: import on a not-yet-created extension is unavailable");
+
+        // Happy path: import runs, and the game is queued for a refresh on the UI thread.
+        var paPlugin = PlayniteAchievements.PlayniteAchievementsPlugin.Start();
+        PlayniteAchievementsBridge.ResetForTests();
+        PlayniteAchievementsBridge.AssemblyResolver = name => typeof(PlayniteAchievements.PlayniteAchievementsPlugin).Assembly;
+        PlayniteAchievementsBridge.PluginTypeResolver = asm => asm.GetType("PlayniteAchievements.PlayniteAchievementsPlugin");
+        Check(PlayniteAchievementsBridge.IsAvailable, "bridge: available when the extension is loaded");
+        Check(PlayniteAchievements.FakeLegacyJsonCacheImporter.Calls == 0, "bridge: resolving does not import");
+
+        var paResult = PlayniteAchievementsBridge.ImportNow(paGameId, runInline, null);
+        Check(paResult == PaImportResult.Imported,
+            "bridge: import succeeds", $"({paResult})");
+        Check(PlayniteAchievements.FakeLegacyJsonCacheImporter.Calls == 1,
+            "bridge: the legacy importer was actually invoked", $"({PlayniteAchievements.FakeLegacyJsonCacheImporter.Calls})");
+        Check(paPlugin.CacheManager.NotifyCalls == 1 && paPlugin.CacheManager.LastNotified.Count == 1 &&
+              paPlugin.CacheManager.LastNotified[0] == paGameId,
+            "bridge: refresh requested for the synced game");
+
+        // Refresh notifications must run on the UI thread we were handed.
+        paPlugin.CacheManager.NotifyCalls = 0;
+        var onUi = false;
+        PlayniteAchievementsBridge.ImportNow(paGameId, action =>
+        {
+            onUi = true;
+            action();
+        }, null);
+        Check(onUi && paPlugin.CacheManager.NotifyCalls == 1, "bridge: refresh is marshalled to the UI thread");
+
+        // Reading current data for a merge.
+        paPlugin.CacheManager.Data[paGameId.ToString("D")] =
+            Newtonsoft.Json.Linq.JObject.Parse("{\"ProviderKey\":\"Steam\",\"AppId\":620}");
+        var read = PlayniteAchievementsBridge.TryReadGameData(paGameId, null);
+        Check(read != null && (string)read["ProviderKey"] == "Steam",
+            "bridge: reads the extension's current data for a merge");
+        Check(PlayniteAchievementsBridge.TryReadGameData(Guid.NewGuid(), null) == null,
+            "bridge: no data for an unknown game is null");
+
+        // Import that throws → Failed, and the sync still wrote its file.
+        PlayniteAchievements.PlayniteAchievementsPlugin.ThrowOnImport = true;
+        paResult = PlayniteAchievementsBridge.ImportNow(paGameId, runInline, null);
+        Check(paResult == PaImportResult.Failed,
+            "bridge: a throwing import is reported as failed", $"({paResult})");
+        PlayniteAchievements.PlayniteAchievementsPlugin.ThrowOnImport = false;
+
+        // An extension without the members we need degrades to unavailable.
+        PlayniteAchievementsBridge.ResetForTests();
+        PlayniteAchievementsBridge.AssemblyResolver = name => typeof(PlayniteAchievements.PlayniteAchievementsPlugin).Assembly;
+        PlayniteAchievementsBridge.PluginTypeResolver = asm => asm.GetType("ShimPluginNoCache");
+        ShimPluginNoCache.Start();
+        Check(!PlayniteAchievementsBridge.IsAvailable, "bridge: an extension without a cache → unavailable");
+        Check(PlayniteAchievementsBridge.ImportNow(paGameId, runInline, null) ==
+            PaImportResult.Unavailable,
+            "bridge: import without the members → unavailable");
+
+        // Negative resolution is retried (not latched) after the extension shows up.
+        PlayniteAchievementsBridge.ResetForTests();
+        PlayniteAchievementsBridge.AssemblyResolver = name => null;
+        Check(!PlayniteAchievementsBridge.IsAvailable, "bridge: retry starts unavailable");
+        PlayniteAchievementsBridge.AssemblyResolver = name => typeof(PlayniteAchievements.PlayniteAchievementsPlugin).Assembly;
+        PlayniteAchievementsBridge.PluginTypeResolver = asm => asm.GetType("PlayniteAchievements.PlayniteAchievementsPlugin");
+        PlayniteAchievements.PlayniteAchievementsPlugin.Start();
+        Check(PlayniteAchievementsBridge.ImportNow(paGameId, runInline, null) ==
+            PaImportResult.Unavailable,
+            "bridge: a negative result is not re-checked immediately (rate limited)");
+
+        PlayniteAchievementsBridge.ResetForTests();
+        PlayniteAchievements.PlayniteAchievementsPlugin.Start();
 
         Console.WriteLine();
         Console.WriteLine($"RESULT: {_pass} passed, {_fail} failed");

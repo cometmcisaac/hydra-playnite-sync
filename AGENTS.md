@@ -24,10 +24,10 @@ version out of `extension.yaml`, so **bumping `extension.yaml` `Version:` is wha
 
 ### Tests live in the repo (`tests/`)
 
-105 checks in a net10 console harness (the shipped plugin targets net48, so the harness is net10):
+162 checks in a net10 console harness (the shipped plugin targets net48, so the harness is net10):
 
 ```bash
-dotnet run --project tests/hydrasync-tests.csproj   # must end with "RESULT: 105 passed, 0 failed"
+dotnet run --project tests/hydrasync-tests.csproj   # must end with "RESULT: 162 passed, 0 failed"
 ```
 
 CI runs this as the **Run tests** step before Build, so a failing check blocks the release.
@@ -36,14 +36,19 @@ Gotchas that will bite you:
   `EnableDefaultCompileItems=false`. **Adding or renaming any testable source file means
   editing that csproj** or the new code silently isn't tested.
 - Only Playnite-independent files compile: `Hydra/*.cs`, `Sync/PlaytimeSyncLogic.cs`,
-  `Sync/GameSyncMode.cs`, `Achievements/LocalAchievementDefinitions.cs`,
-  `Achievements/SteamSchemaClient.cs`, `Update/UpdateChecker.cs`,
-  `Integrations/HowLongToBeatBridge.cs`. `HydraSyncPlugin.cs`, `SyncEngine.cs` and
-  `SyncState.cs` need the Playnite runtime → keep new decision logic in a pure static helper
-  (see `PlaytimeSyncLogic`, `GameSyncModeLogic`) and add a harness section for it.
+  `Sync/PlaytimeMode.cs`, `Sync/GameSyncMode.cs`, `Achievements/LocalAchievementDefinitions.cs`,
+  `Achievements/SteamSchemaClient.cs`, `Achievements/PaPayloadMerge.cs`,
+  `Achievements/SteamTitleSearchClient.cs`, `Update/UpdateChecker.cs`,
+  `Integrations/HowLongToBeatBridge.cs`, `Integrations/PlayniteAchievementsBridge.cs`.
+  `HydraSyncPlugin.cs`, `SyncEngine.cs` and `SyncState.cs` need the Playnite runtime → keep new
+  decision logic in a pure static helper (see `PlaytimeSyncLogic`, `GameSyncModeLogic`,
+  `PlaytimeModeLogic`, `PaPayloadMerge`) and add a harness section for it.
   `tests/PlayniteStubs.cs` supplies minimal `ILogger`/`LogManager`;
-  `tests/FakeHowLongToBeat.cs` is the stand-in for the other extension (its
-  `PluginDatabase` must stay a **property**, not a field — the bridge looks it up that way).
+  `tests/FakeHowLongToBeat.cs` and `tests/FakePlayniteAchievements.cs` stand in for the other
+  extensions (HLTB's `PluginDatabase` must stay a **property**, not a field — the bridge looks it
+  up that way; the PA fake's `CacheManager`/`Instance` and its private `_importer` field mirror
+  the real shapes the PA bridge reflects over). Fake PA types must be **fully qualified** in
+  `Program.cs` — `PlayniteAchievements.PlayniteAchievementsPlugin` — the namespace isn't imported.
 - The LevelDB fixture DB is **committed** at `tests/fixtures/hydra-db-fixture` (binary
   snappy-compressed data produced by Node `classic-level`, mirroring Hydra's on-disk
   encoding). Regenerate with `cd tests/fixtures && npm i && node make-fixture.js`.
@@ -104,14 +109,25 @@ auto-sync timer and the update check. All of them share the `_syncRunning` guard
    reads that. Path resolution is `HydraSyncPlugin.ResolveHydraDbPath`.
 2. **Match** — `MatchIndex` over `Database.Games`: strong `GameId` == `objectId`, weak
    `NormalizeTitle`; Steam-source games preferred, then most recent activity.
-3. **Playtime** — `ApplyPlaytime`: `ShouldRaise` → `Playtime` = Hydra total (seconds), plus
-   `PlaytimeRaisedCount` / `PlaytimeAddedSeconds` / `PlaytimeRaisedGameIds`; `LastActivity`
-   forward-only; `OriginalPlaytimeSecs` captured before the first change.
-4. **Achievements** — `ProcessAchievementsAsync`: `BuildAppIds` → `AchievementFileLocator.Find`
-   → `CollectUnlocks` → schema (local definitions → Web API key → store API) → details →
-   provider-namespaced fingerprint → `PaCacheWriter.Write` with ProviderKey `Steam`/`Manual`.
-5. **Hand-off** — PA's `LegacyJsonCacheImporter` imports `achievement_cache/<guid>.json` at
-   Playnite startup and deletes it, so every new unlock batch needs one Playnite restart.
+3. **Playtime** — `ApplyPlaytime` branches on `Settings.PlaytimeMode`:
+   `PlaytimeSyncLogic.PlanAdditive` (baseline pair in `PlaytimeBaselineHydraMs` → adds only what
+   Hydra gained since the last sync; first pass is `BaselineOnly` and changes nothing, so mode
+   switches can't double-count) or `ShouldRaise` → `Playtime` = Hydra total (seconds). Both then
+   bump `PlaytimeRaisedCount` / `PlaytimeAddedSeconds` / `PlaytimeRaisedGameIds` and record
+   `LastAppliedPlaytimeSecs` (what *we* wrote — what undo subtracts); `LastActivity`
+   forward-only; `OriginalPlaytimeSecs` captured before the first change and deliberately kept
+   across undos so a later sync is equally undoable.
+4. **Achievements** — `ProcessAchievementsAsync`: `BuildAppIds` →
+   `AchievementFileLocator.Find` → `CollectUnlocks` → schema (local definitions → Web API key →
+   store API; for games with no AppID, `SteamTitleSearchClient.FindAsync` looks the title up and
+   its AppID is adopted — similarity ≥ 0.9 guards against sequels) → details →
+   provider-namespaced fingerprint → `PaCacheWriter.Write`, merged through `PaPayloadMerge` with
+   `PlayniteAchievementsBridge.TryReadGameData` when merging is on → `AchievementsMerged`.
+5. **Hand-off** — `PlayniteAchievementsBridge.ImportNow` (reflection) runs PA's
+   `LegacyJsonCacheImporter.ImportIfNeeded()` right after the write and posts
+   `NotifyCacheInvalidated([gameId])` to the UI thread, so unlocks appear without a restart →
+   `AchievementsApplied`. Any failure sets `PaImportPending` → one per-session notification and
+   PA's own startup import picks the file up instead (and deletes it).
 6. **HowLongToBeat (optional)** — `HowLongToBeatBridge.PushPlaytime` over
    `summary.PlaytimeRaisedGameIds`, cap 25 per sync, after the sync notification.
 
@@ -129,21 +145,29 @@ auto-sync timer and the update check. All of them share the `_syncRunning` guard
   (SynchronizationContext captured in `OnApplicationStarted`). All sync entry points share the
   `_syncRunning` Interlocked guard.
 - Plugin-owned state lives in `GetPluginUserDataPath()`: `sync_state.json` (playtime originals,
-  per-game `Always sync:` modes, achievement fingerprints) and `steam_schema_cache/`.
-  Writes are tmp-file + `File.Replace` — keep it that way.
+  `LastAppliedPlaytimeSecs`, `PlaytimeBaselineHydraMs`, per-game `Always sync:` modes, achievement
+  fingerprints) and `steam_schema_cache/` (incl. `title-<hash>.json` title-search lookups, negatives
+  cached too). Writes are tmp-file + `File.Replace` — keep it that way. Adding nullable state
+  fields is safe: missing JSON fields deserialize to `null` on existing users' files.
 - Achievements reach Playnite Achievements by writing
-  `…\ExtensionsData\PlayniteAchievements\achievement_cache\{game-guid}.json`; PA imports and
-  deletes those files **on Playnite startup**, so a new unlock needs one restart to appear.
-  The folder name is PA's *class GUID* dir, resolved dynamically in `PaCacheWriter`.
+  `…\ExtensionsData\PlayniteAchievements\achievement_cache\{game-guid}.json`; PA's
+  `LegacyJsonCacheImporter` reads and deletes those files, and we now trigger that import
+  ourselves through the bridge, so a restart is only the fallback. The folder name is PA's
+  *class GUID* dir, resolved dynamically in `PaCacheWriter`.
 - Hydra's LevelDB is locked while Hydra runs → `HydraDbReader` falls back to a GUID-named temp
   snapshot copy. Object IDs from untrusted data are only used in file paths when all-digits.
-- **Talking to another extension stays reflection-only** (`Integrations/HowLongToBeatBridge.cs`):
-  never reference a third-party extension's DLL. Find the already-loaded assembly in the app
-  domain, late-bind the one method you need, and fill that method's unknown parameters with
-  their declared defaults so a signature change can't throw into the sync path. Resolution
-  failures are retried (not latched) and degrade to a single "unavailable" notification.
-  `AssemblyResolver` / `PluginTypeResolver` / `ResetForTests` exist so the harness can exercise
-  every branch — keep them `internal`.
+- **Talking to another extension stays reflection-only** (`Integrations/HowLongToBeatBridge.cs`,
+  `Integrations/PlayniteAchievementsBridge.cs`): never reference a third-party extension's DLL.
+  Find the already-loaded assembly in the app domain, late-bind the one method you need, and fill
+  that method's unknown parameters with their declared defaults so a signature change can't throw
+  into the sync path. Resolution failures are retried every 60 s (not latched) and degrade to a
+  single "unavailable" notification / "applied at its next start". `AssemblyResolver` /
+  `PluginTypeResolver` / `ResetForTests` exist so the harness can exercise every branch — keep them
+  `internal`.
+- **Reflection traps that already bit us** (don't regress them): a method found on a *field's
+  type* must be invoked on `field.GetValue(owner)`, not the owner (TargetException); and
+  `JArray.Add`/`JObject[x]` **clone** tokens that already have a parent, so merge results must
+  `DeepClone()` entries before mutating them.
 
 ## Style rules the maintainer enforces
 
@@ -166,11 +190,15 @@ shallow clones around for greps instead of re-researching:
 ```bash
 git clone --depth 1 https://github.com/JosefNemec/Playnite            # SDK + app internals
 git clone --depth 1 https://github.com/justin-delano/PlayniteAchievements   # PA import path
+git clone --depth 1 https://github.com/Lacro59/playnite-howlongtobeat-plugin  # HLTB push API
 ```
 
 The questions they answer: Playnite — SDK signatures, extension discovery/installer rules,
 how settings views are filtered, what `Game`/`IItemCollection` allow. Playnite Achievements —
-the `achievement_cache` legacy import and its `GameAchievementData`/`AchievementDetail` schema.
+the `achievement_cache` legacy import, `ICacheManager.LoadGameData`/`NotifyCacheInvalidated`, and
+its `GameAchievementData`/`AchievementDetail` schema. HowLongToBeat — `SetCurrentPlayTime`'s
+signature (its plugin extends a `PluginExtended` base from an un-cloned submodule, which is exactly
+why the bridge is reflection-only).
 Local clones have been living in the macOS temp dir; **re-clone if they're gone**. Note
 `gh_grep` misses these repos — local `grep -rn` is faster and reliable.
 
@@ -181,5 +209,6 @@ Local clones have been living in the macOS temp dir; **re-clone if they're gone*
   rationale, state-file layout, version bump references, and the sync pipeline described above)
   belongs here, not there. Keep README free of class names, GUIDs of other extensions and file
   paths that only matter to development.
-- `tests/` — harness (`Program.cs` sections 1-9), `PlayniteStubs.cs`, `fixtures/`.
+- `tests/` — harness (`Program.cs` sections 1-15), `PlayniteStubs.cs`, `FakeHowLongToBeat.cs`,
+  `FakePlayniteAchievements.cs`, `fixtures/`.
 - `.github/release-notes/README.md` — how to cut a release, notes tone rules.

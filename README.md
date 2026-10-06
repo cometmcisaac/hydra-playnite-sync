@@ -34,11 +34,11 @@ Settings live under **Add-ons → Extensions settings → Generic → Hydra Sync
 
 | Feature | Details |
 |---|---|
-| Playtime | Hydra's cumulative total **replaces** Playnite's playtime when — and only when — Hydra's is higher. Nothing is ever added on top, so sessions can't be double-counted. **Undo playtime changes…** puts everything back. |
+| Playtime | Two modes. **Hydra wins (replace when larger)** — the default — sets a game's playtime to Hydra's cumulative total, but only when Hydra's is higher, so nothing is ever added on top. **Add Hydra's new playtime since the previous sync** keeps your Playnite total and adds whatever Hydra gained. Either way **Undo playtime changes…** removes exactly what Hydra Sync contributed and leaves everything else alone. |
 | Last played | Moves the game's *Last activity* forward to Hydra's last session, never backward. |
 | Achievements | Reads the achievement files already sitting on your disk — the same files Hydra reads — so unlocks also work for non-Steam Hydra games. |
-| Achievement names and icons | Real names, descriptions and icons, resolved from the definition file in the game folder, an optional Steam Web API key, or the public store API (older games only). Cached for 30 days. |
-| Playnite Achievements hand-off | Unlocks are written where Playnite Achievements picks them up on its next start. Steam games are labelled **Steam** (proper source label and icon) while other-store games are labelled **Manual**, so Playnite Achievements keeps its manual-tracking features available for them. |
+| Achievement names and icons | Real names, descriptions and icons, resolved from the definition file in the game folder, an optional Steam Web API key, or the public store API. Games with no discoverable AppID are looked up by title on the store. Cached for 30 days. |
+| Playnite Achievements hand-off | Unlocks are handed to Playnite Achievements and normally show up straight away — no restart. Steam games are labelled **Steam** (proper source label and icon) while other-store games are labelled **Manual**, so Playnite Achievements keeps its manual-tracking features available for them. Existing data for the game is merged into rather than replaced, and anything Playnite Achievements can't be reached for is applied at its next start instead. |
 | Matching | By Steam AppID first, then by title (case-insensitive, symbols ignored). |
 | Automatic syncing | **Off by default.** Turn it on in the settings to sync shortly after Playnite starts and then on an interval you choose (every 15 minutes by default). Changes apply as soon as you save. |
 | Per-game control | Right-click any game (or a multi-selection) to sync just that game's playtime, achievements, or both immediately — or store a per-game mode that narrower passes apply on their own. See [Per-game sync](#per-game-sync). |
@@ -52,10 +52,13 @@ Settings live under **Add-ons → Extensions settings → Generic → Hydra Sync
 
 | Setting | Default | What it does |
 |---|---|---|
+| Playtime | Hydra wins (replace when larger) | Which playtime rule to apply. **Hydra wins** only raises a game to Hydra's total, and only when Hydra's is higher. **Add Hydra's new playtime** keeps your Playnite total and adds what Hydra gained since the previous sync (the first pass records the starting point and changes nothing). |
 | Sync playtime | on | Master switch for playtime and last-activity updates. |
 | Sync achievements | on | Master switch for achievement syncing. |
-| Write to Playnite Achievements | on | Write unlocks where Playnite Achievements will import them. |
-| Fetch Steam schema | on | Allow online lookups for achievement names, descriptions and icons (cached 30 days). Definition files in the game folder are always preferred. |
+| Export achievements to Playnite Achievements | on | Hand unlocks over to Playnite Achievements. |
+| Show new achievements without restarting Playnite | on | Ask Playnite Achievements to apply them straight away. If it can't be reached, they're applied at its next start instead. |
+| Merge with existing Playnite Achievements data | on | Merge into whatever Playnite Achievements already has for a game (keeps other sources, never turns an unlock back into a locked one) instead of replacing it. |
+| Fetch Steam schema | on | Allow online lookups for achievement names, descriptions and icons — by AppID, or by title when the game has no discoverable AppID (cached 30 days). Definition files in the game folder are always preferred. |
 | Steam Web API key | *(empty)* | Optional key from `steamcommunity.com/dev/apikey`. Gets full achievement data for newer games, where the public store API no longer returns it. |
 | Auto-sync | **off** | Sync automatically shortly after Playnite starts and then on the interval below. While off, syncing only happens when you ask for it. |
 | Sync interval (minutes) | 15 | How often automatic syncing runs (1–1440). Only used when auto-sync is on. |
@@ -67,13 +70,13 @@ Where the actions live:
 
 - **Sync now** — settings panel, and Playnite's main menu under `@Hydra Sync` (syncs your whole
   library).
-- **Undo playtime changes…** — settings panel, with a confirmation. Restores every game the
-  extension modified to the playtime it had before, clears the bookkeeping so the next sync
-  starts fresh, and leaves achievements alone.
+- **Undo playtime changes…** — settings panel, with a confirmation. Removes the playtime Hydra Sync
+  added and keeps anything Playnite recorded after a sync, so undoing twice is harmless and a
+  later sync is just as undoable. Achievements are never touched.
 - **Diagnose achievement sync…** — game context menu. Runs the achievement pipeline for one game
-  and shows what it found: the Hydra match, the files it read, the unlocks it parsed, whether
-  anything is waiting for a Playnite restart, and whether Playnite Achievements is reachable.
-  This is the first place to look when unlocks don't appear.
+  and shows what it found: the Hydra match, the files it read, the unlocks it parsed, whether they
+  were applied immediately or are waiting for Playnite Achievements to start, and whether that
+  extension is reachable. This is the first place to look when unlocks don't appear.
 - **Diagnose HowLongToBeat playtime sync…** — game context menu. Reports whether HowLongToBeat
   is reachable, signed in, has data for the game, and whether the game is excluded.
 
@@ -154,17 +157,19 @@ cover most cases:
 | Symptom | Cause / fix |
 |---|---|
 | "Hydra database not found at …" | Hydra Sync couldn't find Hydra's data. It detects the usual locations automatically; if yours is elsewhere (portable install, for example), set **Hydra data directory**. |
-| Game's playtime unchanged | Playtime is only replaced when **Hydra's total is higher**. If Playnite's value is already larger, the game is left alone by design. |
-| Playtime looks wrong after a sync | **Undo playtime changes…** (settings panel) restores every game the extension modified to its pre-sync value, and the next sync applies the replace rule cleanly. |
+| Game's playtime unchanged | Depends on the **Playtime** setting: *Hydra wins* only raises a game to Hydra's total and only when Hydra's is higher; *Add Hydra's new playtime* adds only what Hydra gained since the previous sync. Both leave a game alone when that means no change. |
+| Additive mode added nothing on the first sync | Expected: the first pass records where Hydra's playtime stood and changes nothing, so a sync can never double-count. |
+| Playtime looks wrong after a sync | **Undo playtime changes…** (settings panel) removes exactly what Hydra Sync contributed — anything Playnite recorded after a sync is kept — and the next sync applies the chosen rule cleanly. |
 | Wrong game matched | Matching is by AppID first, then title. Only games already in your library are synced — Hydra-only titles are never added. |
 | Nothing happens on its own | Automatic syncing is **off by default**. Enable **Auto-sync**; it takes effect when you save. |
 | Hydra is running, or the game lives on a network drive | Expected: Hydra locks its database, so a temporary snapshot is read instead. No action needed. |
 
 ### Achievements aren't showing up
 
-Playnite itself has no achievement display — unlocks appear in **Playnite Achievements**, and it
-only imports them at Playnite startup. A sync always needs **one Playnite restart** before new
-unlocks show up.
+Playnite itself has no achievement display — unlocks appear in **Playnite Achievements**. A sync
+normally hands them over and Playnite Achievements applies them immediately, so there is nothing
+to restart; if Playnite Achievements can't be reached, the next time it starts applies them
+instead.
 
 Right-click the game → `Hydra Sync → Diagnose achievement sync…` and read the report:
 
@@ -173,14 +178,16 @@ Right-click the game → `Hydra Sync → Diagnose achievement sync…` and read 
 | `Hydra match: NONE` | The game isn't matched to a Hydra entry. Playtime won't sync either. |
 | `Achievement files found: 0` | No achievement file was located on disk. Check that Hydra itself shows achievements for this game. |
 | Files found, but `Unlocks parsed: 0` | Files exist but contain no unlocked achievements (or an unsupported variant) — open the listed paths manually. |
-| `Cache file awaiting PA import: YES` | Everything worked; restart Playnite so Playnite Achievements imports it. |
+| `Apply without restart: extension not reachable` | Playnite Achievements isn't installed or hasn't loaded yet. The file is written and applied on its next start. |
+| `Cache file awaiting PA import: YES` | Written but not applied yet — start (or restart) Playnite Achievements once and it appears. |
 | `PA QUARANTINE` | Playnite Achievements' parser rejected our file — please report it with that file attached. |
 | Playnite Achievements folder `NOT FOUND` | Playnite Achievements isn't installed, or has never been started. Exports are skipped with an error notification. |
-| `Fingerprint recorded: yes` | Unlocks are unchanged since the last write — restart Playnite to trigger the import. |
+| `Fingerprint recorded: yes` | Unlocks are unchanged since the last write — nothing is re-sent until they change. |
 
-Also check the settings: **Sync achievements** and **Write to Playnite Achievements** must be on.
-Every sync notification includes scan stats (`scanned …, files found for …, with unlocks in …`) —
-if those stay at 0, the problem is finding the files (the first two rows above).
+Also check the settings: **Sync achievements** and **Export achievements to Playnite Achievements**
+must be on. Every sync notification includes scan stats (`scanned …, files found for …, with
+unlocks in …`) plus how many achievement sets were applied immediately and how many were merged —
+if the scan counts stay at 0, the problem is finding the files (the second row above).
 
 ### Only some games are syncing
 
@@ -212,22 +219,15 @@ stored mode.
 
 - Playtime from Hydra games that can't be matched to an existing Playnite game is not imported
   (sync-existing-only by design). Non-Steam games match by normalized title.
-- Replace-if-larger uses Hydra's cumulative total: if a game's Hydra total exceeds Playnite's
-  value, Playnite's value is replaced outright, so sessions played **only** outside Hydra are
-  then not counted. That's the requested behavior — Hydra wins whenever it is higher.
-- Undo puts back the value captured immediately before the extension first changed a game, so a
-  game's original playtime comes back exactly. It only affects games the extension touched;
-  anything Playnite recorded after the first sync is discarded by design. In the rare case where
-  no original was recorded, the value is recovered from how much the extension added and the
-  completion notification labels those games as approximate.
-- For non-Steam games with no discoverable AppID and no achievement file in the game folder,
-  nothing is written — there's nothing to read. Achievement names fall back to prettified names
-  when no metadata source works, and icons are then omitted. Supplying a Steam Web API key fixes
-  metadata for any Steam app.
-- Playnite Achievements imports files at startup only — new unlocks appear after a Playnite
-  restart (or whenever PA re-runs its import).
-- When a game's unlocks change, Hydra Sync overwrites Playnite Achievements' stored data for that
-  game rather than merging into it.
+- With the default *Hydra wins* mode a game is raised to Hydra's cumulative total, so sessions
+  played **only** outside Hydra are then not counted. Switch **Playtime** to *Add Hydra's new
+  playtime* if you'd rather Hydra only ever adds its own new time.
+- Undo can only remove what Hydra Sync added. Playtime that came from somewhere else — including
+  from Playnite sessions after a sync — is deliberately kept.
+- For non-Steam games with no discoverable AppID, no title match on the store and no achievement
+  file in the game folder, nothing is written — there's nothing to read. Achievement names fall
+  back to prettified names when no metadata source works, and icons are then omitted. Supplying a
+  Steam Web API key fixes metadata for any Steam app.
 
 ## Building from source
 
@@ -256,15 +256,15 @@ src/HydraSync/
   SettingsView.cs           # code-only WPF settings view
   extension.yaml            # manifest
   Hydra/                    # database reader, game model, achievement file locator + parsers
-  Achievements/             # metadata lookups, Playnite Achievements writer
-  Integrations/             # bridge to the HowLongToBeat extension
-  Sync/                     # sync engine + persisted state
+  Achievements/             # metadata lookups, payload merge, Playnite Achievements writer
+  Integrations/             # bridges to the HowLongToBeat and Playnite Achievements extensions
+  Sync/                     # sync engine, playtime rules + persisted state
   Update/                   # release update checker
 tests/                      # test harness + database fixture
 ```
 
 The harness covers the Hydra layer end to end: a sample database, every achievement file
-format, game-folder discovery, sync decisions, the release-check version logic and the
-HowLongToBeat bridge. It runs in CI before each release, so a failing check blocks the published
-build. The sample database is committed and mirrors Hydra's real on-disk encoding; regenerate it
-with `cd tests/fixtures && npm i && node make-fixture.js`.
+format, game-folder discovery, sync decisions, playtime rules, the payload merge, the release-check
+version logic and both extension bridges. It runs in CI before each release, so a failing check
+blocks the published build. The sample database is committed and mirrors Hydra's real on-disk
+encoding; regenerate it with `cd tests/fixtures && npm i && node make-fixture.js`.

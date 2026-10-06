@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Playnite.SDK;
 using Playnite.SDK.Models;
 
@@ -23,11 +24,12 @@ namespace HydraSync.Achievements
     /// <summary>
     /// Writes per-game achievement JSON into PlayniteAchievements' achievement_cache/
     /// directory (inside PA's data folder, ExtensionsData\{PA class Guid}). PA's
-    /// LegacyJsonCacheImporter.ImportIfNeeded() runs at plugin startup,
-    /// imports every *.json there (key = filename = Playnite game GUID), stores it in
-    /// PA's SQLite cache under the given ProviderKey ("Hydra" / "Manual"), then deletes
-    /// the file. Display is provider-agnostic (cached data is read by game GUID), so the
-    /// data shows up for any game, including non-Steam ones.
+    /// LegacyJsonCacheImporter.ImportIfNeeded() imports every *.json there (key = filename =
+    /// Playnite game GUID), stores it in PA's SQLite cache under the given ProviderKey
+    /// ("Steam" / "Manual"), then deletes the file. The import normally runs at PA startup;
+    /// <c>PlayniteAchievementsBridge</c> triggers it immediately after a write so no restart is
+    /// needed. Display is provider-agnostic (cached data is read by game GUID), so the data
+    /// shows up for any game, including non-Steam ones.
     ///
     /// Field names follow PA's Models/Achievements/GameAchievementData.cs schema;
     /// the importer parses tolerantly (missing fields default).
@@ -82,13 +84,19 @@ namespace HydraSync.Achievements
         public static bool IsAvailable => Directory.Exists(PaPluginDir);
 
         /// <param name="providerKey">
-        /// PA cache ProviderKey. "Hydra" for Steam-shop games; "Manual" for non-Steam games —
-        /// PA treats cached non-"Manual" data as "another provider owns this game" and hides
-        /// its manual-tracking features, while "Manual" keeps them available (and PA's manual
-        /// refresh never runs for games without a manual link, so our data can't be clobbered).
+        /// PA cache ProviderKey. "Steam" for Steam-shop games (PA then labels and styles the data
+        /// with its Steam source); "Manual" for non-Steam games — PA treats cached non-"Manual"
+        /// data as "another provider owns this game" and hides its manual-tracking features, while
+        /// "Manual" keeps them available (and PA's manual refresh never runs for games without a
+        /// manual link, so our data can't be clobbered).
+        /// </param>
+        /// <param name="existing">
+        /// PA's current record for this game when it could be read
+        /// (<c>PlayniteAchievementsBridge.TryReadGameData</c>). The payload is merged with it so
+        /// other providers' entries and unlocks PA already knows are preserved; null = no merge.
         /// </param>
         public static void Write(Game game, int appId, string providerGameKey,
-            IReadOnlyList<PaAchievement> achievements, string providerKey, ILogger log)
+            IReadOnlyList<PaAchievement> achievements, string providerKey, JObject existing, ILogger log)
         {
             Directory.CreateDirectory(CacheDir);
 
@@ -105,11 +113,14 @@ namespace HydraSync.Achievements
                 Achievements = new List<PaAchievement>(achievements),
             };
 
-            var json = JsonConvert.SerializeObject(dto, Formatting.Indented, new JsonSerializerSettings
+            var serializer = JsonSerializer.Create(new JsonSerializerSettings
             {
                 NullValueHandling = NullValueHandling.Ignore,
                 DateTimeZoneHandling = DateTimeZoneHandling.Utc,
             });
+
+            var payload = PaPayloadMerge.Merge(JObject.FromObject(dto, serializer), existing);
+            var json = payload.ToString(Formatting.Indented);
 
             var path = Path.Combine(CacheDir, game.Id.ToString("D") + ".json");
             var tmp = path + ".tmp";
@@ -123,7 +134,8 @@ namespace HydraSync.Achievements
                 File.Move(tmp, path);
             }
 
-            log?.Debug($"HydraSync: wrote PA cache for {game.Name} ({achievements.Count} achievements)");
+            log?.Debug($"HydraSync: wrote PA cache for {game.Name} ({achievements.Count} achievements" +
+                       (existing == null ? "" : ", merged with existing PA data") + ")");
         }
 
         private class PaDataDto

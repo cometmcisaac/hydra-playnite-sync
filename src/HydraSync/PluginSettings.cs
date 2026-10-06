@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using HydraSync.Sync;
 using Playnite.SDK;
 
 namespace HydraSync
@@ -30,6 +31,15 @@ namespace HydraSync
         public bool SyncPlaytime { get; set; } = true;
         public bool SyncAchievements { get; set; } = true;
         public bool WriteToPlayniteAchievements { get; set; } = true;
+
+        /// <summary>
+        /// How Hydra's playtime is applied: <see cref="PlaytimeMode.HydraWins"/> (default) only
+        /// replaces Playnite's value when Hydra's total is higher, or
+        /// <see cref="PlaytimeMode.AddHydraIncrements"/> which adds just the playtime Hydra gained
+        /// since the last sync. Additive mode records a baseline on the first pass, so already
+        /// synced games are never doubled.
+        /// </summary>
+        public PlaytimeMode PlaytimeMode { get; set; } = PlaytimeMode.HydraWins;
 
         /// <summary>
         /// Opt-in automatic syncing: one pass shortly after Playnite starts, then one
@@ -71,6 +81,19 @@ namespace HydraSync
         /// </summary>
         public bool PushPlaytimeToHowLongToBeat { get; set; } = false;
 
+        /// <summary>
+        /// Merge with the achievement data Playnite Achievements already has instead of
+        /// replacing it, so entries from other providers and unlocks it knows about survive.
+        /// </summary>
+        public bool MergeWithPlayniteAchievements { get; set; } = true;
+
+        /// <summary>
+        /// Ask Playnite Achievements to import new data as soon as it is written, instead of
+        /// waiting for the next Playnite start. When the extension can't be reached the data is
+        /// still written and Playnite imports it at the next start, as before.
+        /// </summary>
+        public bool ImportAchievementsImmediately { get; set; } = true;
+
         public PluginSettings GetClone()
         {
             return (PluginSettings)MemberwiseClone();
@@ -105,6 +128,7 @@ namespace HydraSync
             current.SyncPlaytime = _backup.SyncPlaytime;
             current.SyncAchievements = _backup.SyncAchievements;
             current.WriteToPlayniteAchievements = _backup.WriteToPlayniteAchievements;
+            current.PlaytimeMode = _backup.PlaytimeMode;
             current.AutoSync = _backup.AutoSync;
             current.SyncIntervalMinutes = _backup.SyncIntervalMinutes;
             current.HydraDataDir = _backup.HydraDataDir;
@@ -112,6 +136,8 @@ namespace HydraSync
             current.SteamWebApiKey = _backup.SteamWebApiKey;
             current.CheckForUpdates = _backup.CheckForUpdates;
             current.PushPlaytimeToHowLongToBeat = _backup.PushPlaytimeToHowLongToBeat;
+            current.MergeWithPlayniteAchievements = _backup.MergeWithPlayniteAchievements;
+            current.ImportAchievementsImmediately = _backup.ImportAchievementsImmediately;
         }
 
         public void EndEdit()

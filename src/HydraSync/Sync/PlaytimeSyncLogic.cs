@@ -71,5 +71,100 @@ namespace HydraSync.Sync
             approximate = false;
             return currentPlaytime;
         }
+
+        /// <summary>
+        /// Undo value when the plugin knows the exact number it last applied. Only the
+        /// sync's own contribution is removed (<c>lastApplied - original</c>), so playtime
+        /// Playnite recorded after the sync survives. Falls back to <see cref="Restore"/>
+        /// when either recorded value is missing.
+        /// </summary>
+        public static ulong RestoreApplied(ulong currentPlaytime, ulong? originalPlaytimeSecs,
+            ulong? lastAppliedPlaytimeSecs, long recordedAddedMs, out bool approximate)
+        {
+            if (lastAppliedPlaytimeSecs.HasValue && originalPlaytimeSecs.HasValue)
+            {
+                var applied = lastAppliedPlaytimeSecs.Value;
+                var original = originalPlaytimeSecs.Value;
+                if (applied > original)
+                {
+                    var contribution = applied - original;
+                    if (currentPlaytime >= contribution)
+                    {
+                        approximate = false;
+                        return currentPlaytime - contribution;
+                    }
+
+                    // Playtime is now lower than what the sync added (hand-edited, or the
+                    // game was removed and re-added) - the original is the closest value
+                    // we can defend, and never raises playtime above what is there now.
+                    approximate = true;
+                    return original <= currentPlaytime ? original : currentPlaytime;
+                }
+
+                // Nothing was ever added (applied == original): undo is a no-op.
+                approximate = false;
+                return currentPlaytime;
+            }
+
+            return Restore(currentPlaytime, originalPlaytimeSecs, recordedAddedMs, out approximate);
+        }
+
+        /// <summary>Result of planning an additive playtime update.</summary>
+        public struct PlaytimePlan
+        {
+            /// <summary>True when <see cref="NewPlaytime"/> should be written to the game.</summary>
+            public bool ShouldApply;
+
+            public ulong NewPlaytime;
+
+            /// <summary>Seconds added to the game (0 when nothing is applied).</summary>
+            public long AddedSeconds;
+
+            /// <summary>Hydra total (ms) to remember as the baseline for the next sync.</summary>
+            public long BaselineHydraMs;
+
+            /// <summary>True when this pass only recorded a baseline and changed no playtime.</summary>
+            public bool BaselineOnly;
+        }
+
+        /// <summary>
+        /// Additive mode: only Hydra's playtime gained since <paramref name="baselineHydraMs"/>
+        /// is added to the game's current value, so nothing is ever doubled. The first pass for
+        /// a game records the baseline and changes nothing; a Hydra total below the baseline
+        /// (its counter was reset) re-baselines instead of adding.
+        /// </summary>
+        public static PlaytimePlan PlanAdditive(ulong currentPlaytime, long hydraMs,
+            bool hasBaseline, long baselineHydraMs)
+        {
+            var hydra = hydraMs < 0 ? 0 : hydraMs;
+
+            if (!hasBaseline)
+            {
+                return new PlaytimePlan { BaselineHydraMs = hydra, BaselineOnly = true };
+            }
+
+            if (hydra <= baselineHydraMs)
+            {
+                return new PlaytimePlan
+                {
+                    BaselineHydraMs = hydra,
+                    BaselineOnly = hydra != baselineHydraMs,
+                };
+            }
+
+            var seconds = (hydra - baselineHydraMs) / 1000;
+            if (seconds <= 0)
+            {
+                return new PlaytimePlan { BaselineHydraMs = hydra };
+            }
+
+            return new PlaytimePlan
+            {
+                ShouldApply = true,
+                NewPlaytime = currentPlaytime + (ulong)seconds,
+                AddedSeconds = seconds,
+                BaselineHydraMs = hydra,
+            };
+        }
     }
 }
