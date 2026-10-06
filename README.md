@@ -140,8 +140,7 @@ mode can only narrow what happens, never re-enable something switched off global
 main menu (`@Hydra Sync → Sync now`) still syncs the whole library.
 
 **Undo playtime changes** (with confirmation): restores every game the plugin modified to
-its original playtime — exact for games synced by v1.2+, recovered approximately for
-games synced by the older additive builds (their recorded bookkeeping is subtracted).
+its original playtime, the value captured right before the first time the plugin changed it.
 Achievements are never touched, and the playtime bookkeeping is cleared so the next sync
 re-applies the replace-if-larger rule from a clean slate.
 
@@ -255,7 +254,7 @@ and errors explain where each game stopped. Two in-app reports cover most cases:
 |---|---|
 | "Hydra database not found at …" | Wrong folder. Hydra Sync auto-detects `%APPDATA%\Hydra\hydra-db`, older `%APPDATA%\hydralauncher\hydra-db`, `-staging` variants and direct-DB layouts; if yours is elsewhere, set **Hydra data directory**. |
 | Game's playtime unchanged | Playtime is only replaced when **Hydra's total is higher**. If Playnite's value is already larger, the game is left alone by design. |
-| Playtime doubled or wrong after an old version | Older builds added to the existing value. **Undo playtime changes…** (settings panel) restores the pre-sync values, then the next sync applies the replace rule. |
+| Playtime looks wrong after a sync | **Undo playtime changes…** (settings panel) restores every game the plugin modified to its pre-sync value, and the next sync re-applies the replace rule cleanly. |
 | Wrong game matched | Matching is by AppID first, then normalized title. Only games already in your library are synced — Hydra-only titles are never added. |
 | Nothing happens on its own | Automatic syncing is **off by default**. Enable **Auto-sync**; it takes effect when you save. |
 | Hydra is running / game folders on a network drive | Expected: Hydra locks its database, so a temp snapshot copy is read instead. No action needed. |
@@ -317,9 +316,9 @@ switches and the stored mode.
   Playnite's value, Playnite's value is replaced outright — sessions played **only**
   outside Hydra are then not counted (Hydra's total doesn't contain them). This is the
   requested behavior: Hydra wins whenever it is higher.
-- Undo for games first synced by the pre-1.2 additive builds recovers the original value
-  approximately (it subtracts the recorded cumulative added amount; breaks only if the
-  first sync had historical-import disabled or Hydra's playtime was reset mid-life).
+- Undo restores the value captured immediately before the plugin first changed a game, so
+  a game's original playtime comes back exactly. It only affects games this plugin touched;
+  anything Playnite recorded after the first sync is discarded by design.
 - For non-Steam games without any discoverable AppID or game-dir achievement file,
   nothing is written (there's nothing to read). Achievement names fall back to
   prettified API names when no schema source works (local definition files absent, no
