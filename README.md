@@ -6,7 +6,7 @@ achievement unlocks into the **Playnite Achievements** extension (justin-delano/
 
 - Extension ID: `A76358E9-BFA2-4189-B6F3-2307EA4E217B`
 - Type: Generic plugin · Target: Playnite 10.x (SDK 6.18) · .NET Framework 4.8
-- Package: `dist/HydraSync-1.8.0.pext`
+- Package: `dist/HydraSync-1.9.0.pext`
 
 ## What it does
 
@@ -22,6 +22,7 @@ achievement unlocks into the **Playnite Achievements** extension (justin-delano/
 | Per-game sync | The game context menu syncs a single game (or a multi-selection) **immediately** — playtime, achievements, or both in one click, ignoring the global switches. Separate `Always sync: …` items store a per-game mode that narrower parts apply on their own. |
 | Scope | **Sync existing games only** — Hydra-only games are not imported; unmatched Hydra entries are skipped. |
 | Updates | Checks the repo's GitHub Releases ~2 minutes after Playnite starts (toggle) and offers a one-click **Download & install update** from the `@Hydra Sync` main menu — Playnite then runs its normal confirm + restart flow. |
+| HowLongToBeat | Optional (off by default): after a sync raises a game's playtime, Hydra Sync asks the HowLongToBeat extension to submit the new total, the same call it makes when a game exits. Skips signed-out, ignored, and unlinked games. |
 
 ## Requirements
 
@@ -35,12 +36,12 @@ achievement unlocks into the **Playnite Achievements** extension (justin-delano/
 ## Install
 
 **Option A — package:**
-grab `HydraSync-1.8.0.pext` from this repo's **Releases** page (or build it yourself with
+grab `HydraSync-1.9.0.pext` from this repo's **Releases** page (or build it yourself with
 `scripts/package.sh`) and double-click it (Playnite must be installed; it registers the
 `.pext` file association). Playnite verifies and installs the extension automatically.
 
 **Option B — manual:**
-extract the contents of the `HydraSync-1.8.0.pext` package (a plain zip) into
+extract the contents of the `HydraSync-1.9.0.pext` package (a plain zip) into
 
 ```
 %APPDATA%\Playnite\Extensions\A76358E9-BFA2-4189-B6F3-2307EA4E217B\
@@ -68,6 +69,7 @@ so that `extension.yaml` sits directly in that folder. Restart Playnite.
 | Sync interval (minutes) | 15 | Auto-sync timer period (1–1440); only used when auto-sync is enabled. |
 | Hydra data directory | *(empty)* | Auto-detects `%APPDATA%\Hydra\hydra-db`, `%APPDATA%\hydralauncher\hydra-db` (older builds), `-staging` variants, or a direct-DB folder (accepted: the `hydra-db` folder itself or its parent). Set explicitly for portable Hydra installs. |
 | Check for Hydra Sync updates at startup | on | Query GitHub Releases ~2 minutes after Playnite starts and notify when a newer version is available. |
+| Push playtime to HowLongToBeat | **off** | After a sync raises a game's playtime, ask the [HowLongToBeat](https://github.com/Lacro59/playnite-howlongtobeat-plugin) extension to submit the new total — the same call it makes when a game exits. Needs HowLongToBeat installed and logged in. Only games the sync actually raised are pushed (max 25 per sync). |
 
 **Sync now** and **Undo playtime changes…** are available from the extension's settings
 panel; **Sync now** is also in the Playnite main menu (`@Hydra Sync`) and on a game's
@@ -80,6 +82,31 @@ one game and shows a report: Hydra match, AppIDs used, local definition files fo
 whether a Steam Web API key is set, every achievement file found
 (paths), unlocks parsed, whether a cache file is awaiting PA import, quarantine status,
 the per-game sync mode, and PA folder availability. Use it whenever unlocks don't appear.
+
+### HowLongToBeat
+
+When *Push playtime to HowLongToBeat* is on, every game whose playtime the sync raised is
+handed to the HowLongToBeat extension right after the sync notification, using the same
+call HowLongToBeat makes itself when a game exits. It submits the playtime only — the game is
+not marked as "Playing" — and every other option keeps HowLongToBeat's own defaults, so this
+is equivalent to a normal game-exit update.
+
+Details worth knowing:
+
+- **Off by default.** It writes to a third-party account, so it stays opt-in.
+- **Only raised games are pushed.** A game whose playtime Hydra did not raise is left alone;
+  you get a notification reporting how many were updated, skipped, or failed.
+- **Games are skipped, never guessed at.** If you are signed out of HowLongToBeat, the game
+  carries its "ignore playtime sync" tag, or HowLongToBeat has no data linked for it, the push
+  is skipped rather than creating an entry.
+- **Capped at 25 games per sync**, because each push is a couple of HTTP round-trips.
+- **HowLongToBeat must be installed**, and Hydra Sync talks to the copy Playnite has already
+  loaded — no reference to HowLongToBeat.dll is shipped, so versions can't conflict. If the
+  extension isn't available you get one notification explaining why and nothing else breaks.
+- Two manual items sit on the game context menu: **Push playtime to HowLongToBeat now**
+  (submits the current playtime for the selected games regardless of the setting) and
+  **Diagnose HowLongToBeat playtime sync…** (reports whether the extension is reachable,
+  logged in, has data for the game, and whether the game is excluded).
 
 **Per-game sync** — right-click any game (or multi-select several) → `Hydra Sync`:
 
@@ -164,6 +191,9 @@ downloads the `.pext` and hands it to Playnite, which shows its usual
 5. **PA import** — Playnite Achievements imports these files on startup
    (`LegacyJsonCacheImporter`) and deletes them. A one-time notification reminds you to
    restart Playnite after the first achievement sync.
+6. **HowLongToBeat (optional)** — the ids of the games whose playtime was raised are recorded
+   in the run summary; when the setting is on they are pushed to the loaded HowLongToBeat
+   extension after the sync notification (max 25 per sync), one game at a time.
 
 Game DB updates are marshalled to Playnite's UI thread; syncs run off-thread with a
 re-entrancy guard.
@@ -241,7 +271,8 @@ at Debug level in `%APPDATA%\Playnite\logs\Playnite.log` (search `HydraSync`).
 ## Windows test checklist
 
 1. **Load** — install the `.pext`, start Playnite. Check
-   `Add-ons → Extensions settings → Generic` shows *Hydra Sync* (v1.8.0) with no error banner, and
+   `Add-ons → Extensions settings → Generic` shows *Hydra Sync* (v1.9.0) with no error
+   banner, and
    `%APPDATA%\Playnite\logs\Playnite.log` contains no `HydraSync` errors
    (search for `HydraSync`).
 2. **Settings** — open the extension's settings; verify all toggles/fields render and
@@ -291,6 +322,16 @@ at Debug level in `%APPDATA%\Playnite\logs\Playnite.log` (search `HydraSync`).
    written with `"ProviderKey": "Manual"` → restart → unlocks visible in PA, **and**
    PA's manual-achievement editing features for that game are still offered (an "Manual"
    key does not lock the game as owned by another provider).
+2e. **HowLongToBeat off (default)** — with *Push playtime to HowLongToBeat* unchecked, sync a
+    game whose playtime was raised: no HowLongToBeat notification appears.
+2f. **HowLongToBeat on** — install and log into HowLongToBeat, link at least one game, then
+    enable the setting and sync. Expect a follow-up `Hydra Sync → HowLongToBeat: updated N`
+    notification for exactly the games whose playtime was raised, and the same value in
+    HowLongToBeat. Confirm a game carrying HowLongToBeat's ignore tag, or with no linked data,
+    is skipped rather than created. `Push playtime to HowLongToBeat now` works with the setting
+    off, and `Diagnose HowLongToBeat playtime sync…` explains the current state. With
+    HowLongToBeat not installed at all, one notification says it is unavailable and syncing is
+    otherwise unaffected.
 10. **No PA installed** — with PA absent, achievements sync should still run without
     errors and only report "PA unavailable" internally; playtime unaffected.
 11. **Menu/notifications** — game context menu item works; error paths (bad Hydra dir in

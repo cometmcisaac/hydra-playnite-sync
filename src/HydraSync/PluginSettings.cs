@@ -64,6 +64,13 @@ namespace HydraSync
         /// </summary>
         public bool CheckForUpdates { get; set; } = true;
 
+        /// <summary>
+        /// After a sync raises a game's playtime, ask the HowLongToBeat extension to submit the
+        /// new total for that game - the same call it makes itself when a game exits. Opt-in:
+        /// it writes to a third-party account, and only games this run actually raised are pushed.
+        /// </summary>
+        public bool PushPlaytimeToHowLongToBeat { get; set; } = false;
+
         public PluginSettings GetClone()
         {
             return (PluginSettings)MemberwiseClone();
@@ -104,6 +111,7 @@ namespace HydraSync
             current.FetchSteamSchema = _backup.FetchSteamSchema;
             current.SteamWebApiKey = _backup.SteamWebApiKey;
             current.CheckForUpdates = _backup.CheckForUpdates;
+            current.PushPlaytimeToHowLongToBeat = _backup.PushPlaytimeToHowLongToBeat;
         }
 
         public void EndEdit()

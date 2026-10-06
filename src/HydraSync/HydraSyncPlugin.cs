@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Windows.Controls;
 using HydraSync.Achievements;
 using HydraSync.Hydra;
+using HydraSync.Integrations;
 using HydraSync.Sync;
 using HydraSync.Update;
 using Playnite.SDK;
@@ -38,7 +39,12 @@ namespace HydraSync
         private Timer _timer;
         private int _syncRunning;
         private bool _paWarned;
+        private bool _hltbWarned;
         private ILogger _log;
+
+        /// <summary>HowLongToBeat pushes are rate-limited per sync - a large first sync would
+        /// otherwise fire dozens of submission round-trips at their API.</summary>
+        private const int HltbPushCap = 25;
         private UpdateCheckResult _availableUpdate;
         private CancellationTokenSource _updateCts;
 
@@ -160,12 +166,30 @@ namespace HydraSync
 
             yield return new GameMenuItem
             {
+                Description = "Push playtime to HowLongToBeat now",
+                MenuSection = "Hydra Sync",
+                Action = a => PushPlaytimeToHltbNow(a.Games, selectionLabel),
+            };
+
+            yield return new GameMenuItem
+            {
                 Description = "Diagnose achievement sync…",
                 MenuSection = "Hydra Sync",
                 Action = a =>
                 {
                     var game = a.Games != null && a.Games.Count > 0 ? a.Games[0] : null;
                     if (game != null) DiagnoseAchievements(game);
+                },
+            };
+
+            yield return new GameMenuItem
+            {
+                Description = "Diagnose HowLongToBeat playtime sync…",
+                MenuSection = "Hydra Sync",
+                Action = a =>
+                {
+                    var game = a.Games != null && a.Games.Count > 0 ? a.Games[0] : null;
+                    if (game != null) DiagnoseHowLongToBeat(game);
                 },
             };
         }
@@ -245,6 +269,11 @@ namespace HydraSync
                         $"{summary.AchievementsWritten} achievement set(s) updated.",
                         NotificationType.Info);
                 }
+
+                if (Settings.PushPlaytimeToHowLongToBeat && summary.PlaytimeRaisedGameIds.Count > 0)
+                {
+                    await PushPlaytimeToHltbAsync(summary.PlaytimeRaisedGameIds);
+                }
             }
             catch (Exception ex)
             {
@@ -309,6 +338,147 @@ namespace HydraSync
                 _log?.Error(ex, "HydraSync: failed to store per-game sync mode");
                 Notify("hydrasync-mode-error", "Hydra Sync could not save the per-game mode.", NotificationType.Error);
             }
+        }
+
+        // ---------- HowLongToBeat ----------
+
+        /// <summary>
+        /// Hands the games whose playtime this run raised to the HowLongToBeat extension, one
+        /// game at a time. Runs after the sync notification on purpose: each push is a couple of
+        /// HTTP round-trips inside the other extension, so the sync result must not wait for it.
+        /// </summary>
+        private async Task PushPlaytimeToHltbAsync(List<Guid> gameIds)
+        {
+            if (gameIds == null || gameIds.Count == 0) return;
+
+            if (!HowLongToBeatBridge.IsAvailable)
+            {
+                WarnHltbUnavailableOnce();
+                return;
+            }
+
+            var targets = new List<(Guid, object)>();
+            foreach (var id in gameIds)
+            {
+                var game = PlayniteApi.Database.Games.Get(id);
+                if (game != null) targets.Add((id, game));
+            }
+
+            if (targets.Count == 0) return;
+
+            var report = await Task.Run(
+                () => HowLongToBeatBridge.PushPlaytime(targets, HltbPushCap, _log));
+
+            if (report.Unavailable)
+            {
+                WarnHltbUnavailableOnce();
+                return;
+            }
+
+            if (report.Updated == 0 && report.Skipped == 0 && report.Failed == 0) return;
+
+            var text = $"Hydra Sync → HowLongToBeat: {HowLongToBeatBridge.Describe(report)}";
+            var capNote = gameIds.Count > HltbPushCap ? $" (capped at {HltbPushCap} per sync)" : string.Empty;
+            Notify(
+                "hydrasync-hltb",
+                text + capNote + ".",
+                report.Failed > 0 ? NotificationType.Error : NotificationType.Info);
+        }
+
+        /// <summary>
+        /// One-shot push for the selected games, independent of the sync settings (the user
+        /// clicked this exact action). Nothing is raised here - it submits the playtime the
+        /// game already has in Playnite.
+        /// </summary>
+        private void PushPlaytimeToHltbNow(List<Game> games, string selectionLabel)
+        {
+            var ids = new List<Guid>();
+            foreach (var game in games ?? new List<Game>())
+            {
+                if (game != null) ids.Add(game.Id);
+            }
+
+            if (ids.Count == 0) return;
+
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await PushPlaytimeToHltbAsync(ids);
+                }
+                catch (Exception ex)
+                {
+                    _log?.Error(ex, "HydraSync: HowLongToBeat push failed");
+                    Notify("hydrasync-hltb-error", "Hydra Sync could not push playtime to HowLongToBeat: " + ex.Message, NotificationType.Error);
+                }
+            });
+        }
+
+        private void WarnHltbUnavailableOnce()
+        {
+            _log?.Warn("HydraSync: HowLongToBeat unavailable - playtime push skipped");
+            if (_hltbWarned) return;
+
+            _hltbWarned = true;
+            Notify(
+                "hydrasync-nohlb",
+                "Hydra Sync: HowLongToBeat is not available (" +
+                (HowLongToBeatBridge.UnavailableReason ?? "extension not loaded") +
+                "), so the playtime push was skipped. Install and log into the HowLongToBeat " +
+                "extension, then use \"Push playtime to HowLongToBeat now\" on a game.",
+                NotificationType.Error);
+        }
+
+        /// <summary>
+        /// Shows what a HowLongToBeat push would do for one game right now: whether the
+        /// extension is reachable, logged in, has data for the game, and whether the game is
+        /// excluded from playtime sync.
+        /// </summary>
+        private void DiagnoseHowLongToBeat(Game game)
+        {
+            Task.Run(() =>
+            {
+                try
+                {
+                    var sb = new StringBuilder();
+                    sb.AppendLine("Hydra Sync - HowLongToBeat playtime diagnostics");
+                    sb.AppendLine("Game: " + game.Name);
+                    sb.AppendLine("Playtime in Playnite: " +
+                        TimeSpan.FromSeconds((long)game.Playtime).ToString(@"d\.hh\:mm\:ss"));
+                    sb.AppendLine();
+                    sb.AppendLine("Setting 'push playtime to HowLongToBeat': " +
+                        (Settings.PushPlaytimeToHowLongToBeat ? "on" : "off") +
+                        " (only games a sync actually raised are pushed automatically)");
+
+                    var available = HowLongToBeatBridge.IsAvailable;
+                    sb.AppendLine("HowLongToBeat extension: " +
+                        (available ? "available" : "NOT AVAILABLE - " + HowLongToBeatBridge.UnavailableReason));
+
+                    if (available)
+                    {
+                        var loggedIn = HowLongToBeatBridge.IsLoggedIn;
+                        sb.AppendLine("Logged in: " +
+                            (loggedIn == null ? "unknown" : loggedIn.Value ? "yes" : "no"));
+                        sb.AppendLine("HowLongToBeat data linked: " +
+                            (HowLongToBeatBridge.HasData(game.Id) ? "yes" : "no"));
+                        sb.AppendLine("Excluded from playtime sync: " +
+                            (HowLongToBeatBridge.IsIgnored(game) ? "yes" : "no"));
+                    }
+
+                    sb.AppendLine();
+                    sb.AppendLine(available
+                        ? "Use \"Push playtime to HowLongToBeat now\" to submit the value above right now."
+                        : "Install the HowLongToBeat extension and log in, then run this again.");
+
+                    var report = sb.ToString();
+                    RunOnUi(() => PlayniteApi.Dialogs.ShowMessage(report, "Hydra Sync - HowLongToBeat diagnostics"));
+                }
+                catch (Exception ex)
+                {
+                    _log?.Error(ex, "HydraSync: HowLongToBeat diagnostics failed");
+                    Notify("hydrasync-hltb-diag-error", "Hydra Sync could not read the HowLongToBeat state.", NotificationType.Error);
+                }
+            });
         }
 
         /// <summary>
@@ -594,6 +764,13 @@ namespace HydraSync
                         "Hydra Sync wrote achievements for Playnite Achievements. " +
                         "Restart Playnite once so the extension imports them.",
                         NotificationType.Info);
+                }
+
+                // After the sync result is reported - a HowLongToBeat push is a few network
+                // round-trips and must not delay the sync notification.
+                if (Settings.PushPlaytimeToHowLongToBeat && summary.PlaytimeRaisedGameIds.Count > 0)
+                {
+                    await PushPlaytimeToHltbAsync(summary.PlaytimeRaisedGameIds);
                 }
             }
             catch (Exception ex)

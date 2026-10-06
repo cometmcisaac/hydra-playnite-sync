@@ -24,10 +24,10 @@ version out of `extension.yaml`, so **bumping `extension.yaml` `Version:` is wha
 
 ### Tests live in the repo (`tests/`)
 
-84 checks in a net10 console harness (the shipped plugin targets net48, so the harness is net10):
+105 checks in a net10 console harness (the shipped plugin targets net48, so the harness is net10):
 
 ```bash
-dotnet run --project tests/hydrasync-tests.csproj   # must end with "RESULT: 84 passed, 0 failed"
+dotnet run --project tests/hydrasync-tests.csproj   # must end with "RESULT: 105 passed, 0 failed"
 ```
 
 CI runs this as the **Run tests** step before Build, so a failing check blocks the release.
@@ -37,20 +37,34 @@ Gotchas that will bite you:
   editing that csproj** or the new code silently isn't tested.
 - Only Playnite-independent files compile: `Hydra/*.cs`, `Sync/PlaytimeSyncLogic.cs`,
   `Sync/GameSyncMode.cs`, `Achievements/LocalAchievementDefinitions.cs`,
-  `Achievements/SteamSchemaClient.cs`, `Update/UpdateChecker.cs`. `HydraSyncPlugin.cs`,
-  `SyncEngine.cs` and `SyncState.cs` need the Playnite runtime → keep new decision logic in
-  a pure static helper (see `PlaytimeSyncLogic`, `GameSyncModeLogic`) and add a harness
-  section for it. `tests/PlayniteStubs.cs` supplies minimal `ILogger`/`LogManager`.
+  `Achievements/SteamSchemaClient.cs`, `Update/UpdateChecker.cs`,
+  `Integrations/HowLongToBeatBridge.cs`. `HydraSyncPlugin.cs`, `SyncEngine.cs` and
+  `SyncState.cs` need the Playnite runtime → keep new decision logic in a pure static helper
+  (see `PlaytimeSyncLogic`, `GameSyncModeLogic`) and add a harness section for it.
+  `tests/PlayniteStubs.cs` supplies minimal `ILogger`/`LogManager`;
+  `tests/FakeHowLongToBeat.cs` is the stand-in for the other extension (its
+  `PluginDatabase` must stay a **property**, not a field — the bridge looks it up that way).
 - The LevelDB fixture DB is **committed** at `tests/fixtures/hydra-db-fixture` (binary
   snappy-compressed data produced by Node `classic-level`, mirroring Hydra's on-disk
   encoding). Regenerate with `cd tests/fixtures && npm i && node make-fixture.js`.
 - Fixtures are written under `%TEMP%/hydrasync-test-<guid>` only, so the harness is safe to
   run from any working directory (it locates the repo root from `AppContext.BaseDirectory`).
 
+## Version numbering: bump the smallest amount that fits
+
+| Change | Bump | Example |
+|---|---|---|
+| New feature | **+0.1** (minor) | 1.8.0 → **1.9.0** |
+| Bug fix only | **+0.0.1** (patch) | 1.9.0 → **1.9.1** |
+| A batch of features / genuinely major | major | 1.9.0 → **2.0.0** |
+
+Don't inflate the version: features take a minor bump, fixes a patch, and a major version is
+reserved for a large batch of work.
+
 ## Ship it: releases are fully automated, the manifest is the gate
 
 ```bash
-# 1. bump Version: in src/HydraSync/extension.yaml   2. bump README version refs
+# 1. bump Version: in src/HydraSync/extension.yaml (see numbering above)  2. bump README version refs
 # 3. author .github/release-notes/vX.Y.Z.md from _template.md (CI uses it as the release body)
 rm -f dist/HydraSync-<old-version>.pext          # package.sh only removes the current version
 ./scripts/package.sh
@@ -100,6 +114,13 @@ Workflow changes only take effect on the next tag push — there is no PR CI.
   The folder name is PA's *class GUID* dir, resolved dynamically in `PaCacheWriter`.
 - Hydra's LevelDB is locked while Hydra runs → `HydraDbReader` falls back to a GUID-named temp
   snapshot copy. Object IDs from untrusted data are only used in file paths when all-digits.
+- **Talking to another extension stays reflection-only** (`Integrations/HowLongToBeatBridge.cs`):
+  never reference a third-party extension's DLL. Find the already-loaded assembly in the app
+  domain, late-bind the one method you need, and fill that method's unknown parameters with
+  their declared defaults so a signature change can't throw into the sync path. Resolution
+  failures are retried (not latched) and degrade to a single "unavailable" notification.
+  `AssemblyResolver` / `PluginTypeResolver` / `ResetForTests` exist so the harness can exercise
+  every branch — keep them `internal`.
 
 ## Style rules the maintainer enforces
 

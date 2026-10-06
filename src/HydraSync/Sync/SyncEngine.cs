@@ -31,6 +31,12 @@ namespace HydraSync.Sync
 
         /// <summary>Matched games whose achievements were skipped due to a per-game override.</summary>
         public int AchievementsSkipped;
+
+        /// <summary>
+        /// Ids of the games whose playtime this run actually raised. The caller decides what
+        /// to do with them (see <c>HowLongToBeatBridge</c> pushes) - the engine only reports.
+        /// </summary>
+        public readonly List<Guid> PlaytimeRaisedGameIds = new List<Guid>();
     }
 
     /// <summary>
@@ -208,6 +214,7 @@ namespace HydraSync.Sync
 
                 summary.PlaytimeAddedSeconds += (long)hydraSecs - (long)g.Playtime;
                 summary.PlaytimeRaisedCount++;
+                summary.PlaytimeRaisedGameIds.Add(g.Id);
                 g.Playtime = (ulong)hydraSecs;
                 dirty = true;
             }

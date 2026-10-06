@@ -26,9 +26,11 @@
     <Compile Include="../src/HydraSync/Achievements/LocalAchievementDefinitions.cs" />
     <Compile Include="../src/HydraSync/Achievements/SteamSchemaClient.cs" />
     <Compile Include="../src/HydraSync/Update/UpdateChecker.cs" />
+    <Compile Include="../src/HydraSync/Integrations/HowLongToBeatBridge.cs" />
     <!-- Harness itself -->
     <Compile Include="Program.cs" />
     <Compile Include="PlayniteStubs.cs" />
+    <Compile Include="FakeHowLongToBeat.cs" />
   </ItemGroup>
 
   <ItemGroup>

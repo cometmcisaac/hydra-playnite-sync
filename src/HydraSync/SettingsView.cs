@@ -19,13 +19,15 @@ namespace HydraSync
             panel.Children.Add(Check(nameof(PluginSettings.SyncPlaytime),
                 "Sync playtime (Hydra's total replaces Playnite's when it is larger)"));
             panel.Children.Add(Check(nameof(PluginSettings.SyncAchievements),
-                "Sync achievements from local emulator/crack files"));
+                "Sync achievements from achievement files on disk"));
             panel.Children.Add(Check(nameof(PluginSettings.WriteToPlayniteAchievements),
                 "Export achievements to Playnite Achievements (imports on Playnite restart)"));
             panel.Children.Add(Check(nameof(PluginSettings.FetchSteamSchema),
                 "Fetch achievement names/descriptions from Steam"));
             panel.Children.Add(Check(nameof(PluginSettings.CheckForUpdates),
                 "Check for Hydra Sync updates at startup (GitHub releases)"));
+            panel.Children.Add(Check(nameof(PluginSettings.PushPlaytimeToHowLongToBeat),
+                "After raising a game's playtime, have HowLongToBeat submit the new total"));
 
             panel.Children.Add(Check(nameof(PluginSettings.AutoSync),
                 "Auto-sync (once shortly after Playnite starts, then on the interval below)"));
@@ -44,7 +46,9 @@ namespace HydraSync
                     "Only games already in your Playnite library are matched - Hydra-only titles are never imported. " +
                     "Playtime is never added on top: Hydra's total only replaces Playnite's value when it is higher. " +
                     "Auto-sync is off by default - until you enable it, syncing only runs when you pick " +
-                    "\"Sync now\" from the @Hydra Sync menu.",
+                    "\"Sync now\" from the @Hydra Sync menu. " +
+                    "The HowLongToBeat option is off by default too; it needs HowLongToBeat installed and " +
+                    "logged in, and only pushes games whose playtime the sync actually raised.",
             };
             panel.Children.Add(note);
 

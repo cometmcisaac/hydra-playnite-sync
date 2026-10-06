@@ -7,9 +7,22 @@ The release workflow uses that file as the GitHub release body. If the file is m
 still publishes the release but logs a warning and falls back to a minimal generated body —
 so the right habit is to write the notes *before* tagging.
 
+## Version numbering
+
+The version is deliberately not bumped more than it needs to be:
+
+| Change | Bump | Example |
+|---|---|---|
+| New feature | **+0.1** (minor) | 1.8.0 → **1.9.0** |
+| Bug fix only | **+0.0.1** (patch) | 1.9.0 → **1.9.1** |
+| Large release with a batch of features | major | 1.9.0 → **2.0.0** |
+
+Only reach for a new major version for something that genuinely justifies it — a batch of
+features, not routine additions.
+
 ## How to cut a release
 
-1. Update `Version:` in `src/HydraSync/extension.yaml`.
+1. Update `Version:` in `src/HydraSync/extension.yaml` (see the numbering table above).
 2. Write `.github/release-notes/vX.Y.Z.md` — start from `_template.md`.
    Notes describe **this version only**; don't accumulate older highlights.
 3. Bump the version references in `README.md` (package name, checklist).

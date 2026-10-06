@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using HydraSync.Sync;
 using HydraSync.Hydra;
 using HydraSync.Achievements;
+using HltbResult = HydraSync.Integrations.HltbPushResult;
 
 class Program
 {
@@ -395,6 +397,141 @@ class Program
 
         HydraSync.Sync.GameSyncModeLogic.ResolveForced(HydraSync.Sync.GameSyncMode.AchievementsOnly, out pt9, out ach9);
         Check(!pt9 && ach9, "forced AchievementsOnly -> achievements only");
+
+        Console.WriteLine();
+        Console.WriteLine("== 10. HowLongToBeat bridge ==");
+
+        var bridge = typeof(HydraSync.Integrations.HowLongToBeatBridge);
+        var db = HowLongToBeat.HowLongToBeat.PluginDatabase;
+
+        void Reset()
+        {
+            db.LoggedIn = true;
+            db.ThrowOnPush = false;
+            db.PushReturnsFalse = false;
+            db.LinkedDataMissing = false;
+            db.Ignored.Clear();
+            HowLongToBeat.FakeHltbCustomPlugin.PluginDatabase.Calls = 0;
+            bridge.GetField("AssemblyResolver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                ?.SetValue(null, new System.Func<string, System.Reflection.Assembly>(
+                    _ => typeof(HowLongToBeat.HowLongToBeat).Assembly));
+            bridge.GetField("PluginTypeResolver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                ?.SetValue(null, new System.Func<System.Reflection.Assembly, Type>(
+                    a => a.GetType("HowLongToBeat.HowLongToBeat", false)));
+            bridge.GetMethod("ResetForTests", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                ?.Invoke(null, null);
+        }
+
+        var game = new HowLongToBeat.FakeGame { Id = Guid.NewGuid(), Name = "Test Game" };
+
+        // Not installed at all.
+        Reset();
+        bridge.GetField("AssemblyResolver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?.SetValue(null, new System.Func<string, System.Reflection.Assembly>(_ => null));
+        // With an `out` parameter, reflection Invoke returns the result value itself and
+        // copies the out value back into the argument array.
+        var push = bridge.GetMethod(
+            "PushPlaytime",
+            new[] { typeof(Guid), typeof(object), typeof(string).MakeByRefType(), typeof(bool), typeof(Playnite.SDK.ILogger) });
+
+        HltbResult Call(object target)
+        {
+            var args = new object[] { game.Id, target, null, true, null };
+            var result = (HltbResult)push.Invoke(null, args);
+            args[2] = null;
+            return result;
+        }
+
+        Check((bridge.GetProperty("IsAvailable").GetValue(null) as bool?) == false, "unavailable when the extension is not loaded");
+        Check(Call(game) == HydraSync.Integrations.HltbPushResult.Unavailable,
+            "push reports Unavailable when the extension is missing");
+
+        // Installed and logged in.
+        Reset();
+        bridge.GetField("AssemblyResolver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?.SetValue(null, new System.Func<string, System.Reflection.Assembly>(_ => typeof(HowLongToBeat.HowLongToBeat).Assembly));
+        Check((bridge.GetProperty("IsAvailable").GetValue(null) as bool?) == true, "available once the assembly is loaded");
+        Check((bridge.GetProperty("IsLoggedIn").GetValue(null) as bool?) == true, "login state read from the extension");
+
+        HltbResult Result() => Call(game);
+
+        Check(Result() == HydraSync.Integrations.HltbPushResult.Updated, "logged-in push updates");
+        Check(db.PushCount == 1 && db.LastGame == game, "the game object is handed to HowLongToBeat");
+        Check(db.LastNoPlaying, "noPlaying is sent so the game is not marked as playing");
+        Check(!db.LastIsCompleted, "other flags keep the extension's own defaults");
+
+        Check((bridge.GetMethod("HasData").Invoke(null, new object[] { game.Id }) as bool?) == true, "HasData true when linked");
+        Check((bridge.GetMethod("IsIgnored", new[] { typeof(object) }).Invoke(null, new object[] { game }) as bool?) == false, "not ignored by default");
+
+        // Signed out.
+        db.LoggedIn = false;
+        Check(Result() == HydraSync.Integrations.HltbPushResult.NotLoggedIn, "signed-out push is skipped");
+        db.LoggedIn = true;
+
+        // Ignored by HowLongToBeat's own ignore tag.
+        db.Ignored.Add(game.Name);
+        Check(Result() == HydraSync.Integrations.HltbPushResult.Ignored, "ignored game is skipped");
+        Check((bridge.GetMethod("IsIgnored", new[] { typeof(object) }).Invoke(null, new object[] { game }) as bool?) == true, "IsIgnored reflects the tag");
+        db.Ignored.Clear();
+
+        // No linked HLTB data.
+        db.LinkedDataMissing = true;
+        Check(Result() == HydraSync.Integrations.HltbPushResult.NoData, "game without HLTB data is skipped");
+        db.LinkedDataMissing = false;
+
+        // Extension refuses.
+        db.PushReturnsFalse = true;
+        Check(Result() == HydraSync.Integrations.HltbPushResult.Failed, "refused push is a failure");
+        db.PushReturnsFalse = false;
+
+        // Extension throws.
+        db.ThrowOnPush = true;
+        Check(Result() == HydraSync.Integrations.HltbPushResult.Failed, "throwing push is a failure, not an exception");
+        db.ThrowOnPush = false;
+
+        // Bulk push with cap + skipping.
+        var g2 = new HowLongToBeat.FakeGame { Id = Guid.NewGuid(), Name = "Second" };
+        var g3 = new HowLongToBeat.FakeGame { Id = Guid.NewGuid(), Name = "Third" };
+        db.Ignored.Add(g2.Name);
+        var bulk = (HydraSync.Integrations.HltbPushReport)bridge
+            .GetMethod("PushPlaytime", new[] { typeof(IEnumerable<(Guid, object)>), typeof(int), typeof(Playnite.SDK.ILogger) })
+            .Invoke(null, new object[] { new[] { (game.Id, (object)game), (g2.Id, (object)g2), (g3.Id, (object)g3) }, 2, null });
+        // game -> updated, g2 -> ignored (skipped), g3 -> over the cap (skipped).
+        Check(bulk.Updated == 1 && bulk.Skipped == 2 && bulk.Failed == 0, "bulk push reports updated + skipped");
+        Check(bulk.Details.Count == 3, "bulk push records a line per game");
+
+        // A changed signature (extra required parameter, no noPlaying flag) still binds and
+        // fills the unknown parameter with its type default instead of guessing.
+        Reset();
+        bridge.GetField("AssemblyResolver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?.SetValue(null, new System.Func<string, System.Reflection.Assembly>(_ => typeof(HowLongToBeat.FakeHltbCustomPlugin).Assembly));
+        bridge.GetField("PluginTypeResolver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?.SetValue(null, new System.Func<System.Reflection.Assembly, Type>(_ => typeof(HowLongToBeat.FakeHltbCustomPlugin)));
+        var customDb = HowLongToBeat.FakeHltbCustomPlugin.PluginDatabase;
+        var customPush = bridge.GetMethod(
+            "PushPlaytime",
+            new[] { typeof(Guid), typeof(object), typeof(string).MakeByRefType(), typeof(bool), typeof(Playnite.SDK.ILogger) });
+        var customArgs = new object[] { game.Id, game, null, true, null };
+        var customResult = (HltbResult)customPush.Invoke(null, customArgs);
+        Check(customResult == HydraSync.Integrations.HltbPushResult.Updated && customDb.Calls == 1 && customDb.LastOptions == 0,
+            "a changed HowLongToBeat signature still binds (unknown params defaulted)");
+
+        // Report description.
+        Check(
+            HydraSync.Integrations.HowLongToBeatBridge.Describe(new HydraSync.Integrations.HltbPushReport
+            {
+                Updated = 2,
+                Skipped = 1,
+                Failed = 0,
+            }) == "updated 2, skipped 1",
+            "Describe() summarizes the report");
+        Check(
+            HydraSync.Integrations.HowLongToBeatBridge.Describe(new HydraSync.Integrations.HltbPushReport
+            {
+                Unavailable = true,
+                UnavailableReason = "not installed",
+            }) == "not installed",
+            "Describe() surfaces the unavailable reason");
 
         Console.WriteLine();
         Console.WriteLine($"RESULT: {_pass} passed, {_fail} failed");
