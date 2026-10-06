@@ -136,34 +136,13 @@ Playnite, which asks you to confirm the update and then restarts.
 > currently has new plugin submissions on hold while the database is rebuilt. The updater above
 > is how updates reach you in the meantime.
 
-## How it works
-
-1. **Read** — Hydra's database is opened read-only. If Hydra is running and holding it locked, a
-   temporary snapshot is read instead, so you can sync whenever you like. The folder is detected
-   automatically; only an unusual or portable install needs **Hydra data directory** set.
-2. **Match** — your Playnite games are indexed and matched by AppID, falling back to title.
-3. **Playtime** — Hydra's total only replaces a game's playtime when it is higher, so Hydra wins
-   but never inflates the number. The pre-sync value is remembered so **Undo** can restore it
-   exactly.
-4. **Achievements** — for each matched game, Hydra Sync looks for achievement files on disk (both
-   the fixed per-store locations and the formats that live inside the game folder), parses them,
-   resolves the real achievement names, descriptions and icons, and only rewrites what actually
-   changed.
-5. **Hand-off** — the result is written where Playnite Achievements imports it. PA reads it at
-   Playnite startup and removes the file, so **new unlocks need one Playnite restart** before
-   they show up (Hydra Sync reminds you the first time).
-6. **HowLongToBeat (optional)** — the games whose playtime was raised are submitted to the
-   already-loaded HowLongToBeat extension, one at a time, after the sync notification.
-
-Syncing runs off the UI thread and database writes are handed back to Playnite's UI thread, so
-the interface stays responsive. The extension's own files (playtime originals, per-game modes,
-cached schema) live next to it in
-`%APPDATA%\Playnite\ExtensionsData\A76358E9-BFA2-4189-B6F3-2307EA4E217B\`.
-
 ## Troubleshooting
 
 Start with the log: `%APPDATA%\Playnite\logs\Playnite.log`, search for `HydraSync`. Warnings and
-errors explain where each game stopped. Two in-app reports cover most cases:
+errors explain where each game stopped. Hydra Sync's own files — playtime originals, per-game
+modes and cached achievement metadata — live in
+`%APPDATA%\Playnite\ExtensionsData\A76358E9-BFA2-4189-B6F3-2307EA4E217B\`. Two in-app reports
+cover most cases:
 
 - `Hydra Sync → Diagnose achievement sync…` (per game) — match, files found, unlocks parsed,
   pending Playnite Achievements import, quarantine, per-game sync mode.

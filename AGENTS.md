@@ -93,6 +93,28 @@ Workflow changes only take effect on the next tag push — there is no PR CI.
   shims) *are* shipped — Playnite probes the extension folder first.
 - `dist/` and `*.pext` are gitignored; releases come from CI, not from local artifacts.
 
+## The sync pipeline (one pass)
+
+Kept here rather than in the README, which is user-facing and would only repeat the feature
+table. Entry points: `StartSync` (whole library), `SyncSelected` (per-game one-shot), plus the
+auto-sync timer and the update check. All of them share the `_syncRunning` guard.
+
+1. **Read** — `HydraDbReader.ReadGames` opens Hydra's LevelDB read-only (`LevelDb.Managed`);
+   on failure it copies the folder to a GUID-named temp dir (excluding `LOCK`, 3 attempts) and
+   reads that. Path resolution is `HydraSyncPlugin.ResolveHydraDbPath`.
+2. **Match** — `MatchIndex` over `Database.Games`: strong `GameId` == `objectId`, weak
+   `NormalizeTitle`; Steam-source games preferred, then most recent activity.
+3. **Playtime** — `ApplyPlaytime`: `ShouldRaise` → `Playtime` = Hydra total (seconds), plus
+   `PlaytimeRaisedCount` / `PlaytimeAddedSeconds` / `PlaytimeRaisedGameIds`; `LastActivity`
+   forward-only; `OriginalPlaytimeSecs` captured before the first change.
+4. **Achievements** — `ProcessAchievementsAsync`: `BuildAppIds` → `AchievementFileLocator.Find`
+   → `CollectUnlocks` → schema (local definitions → Web API key → store API) → details →
+   provider-namespaced fingerprint → `PaCacheWriter.Write` with ProviderKey `Steam`/`Manual`.
+5. **Hand-off** — PA's `LegacyJsonCacheImporter` imports `achievement_cache/<guid>.json` at
+   Playnite startup and deletes it, so every new unlock batch needs one Playnite restart.
+6. **HowLongToBeat (optional)** — `HowLongToBeatBridge.PushPlaytime` over
+   `summary.PlaytimeRaisedGameIds`, cap 25 per sync, after the sync notification.
+
 ## Conventions and gotchas that differ from defaults
 
 - **Generic plugins are invisible in settings unless** the ctor sets
@@ -154,10 +176,10 @@ Local clones have been living in the macOS temp dir; **re-clone if they're gone*
 
 ## Other references
 
-- `README.md` — **user-facing only**: features, settings, how it works (behaviour level),
-  troubleshooting, limitations, contributor build commands. Everything internal (SDK quirks,
-  PA import internals, packaging rationale, state-file layout, version bump references) belongs
-  here, not there. Keep README free of class names, GUIDs of other extensions and file paths
-  that only matter to development.
+- `README.md` — **user-facing only**: features, settings, troubleshooting, limitations,
+  contributor build commands. Everything internal (SDK quirks, PA import internals, packaging
+  rationale, state-file layout, version bump references, and the sync pipeline described above)
+  belongs here, not there. Keep README free of class names, GUIDs of other extensions and file
+  paths that only matter to development.
 - `tests/` — harness (`Program.cs` sections 1-9), `PlayniteStubs.cs`, `fixtures/`.
 - `.github/release-notes/README.md` — how to cut a release, notes tone rules.
