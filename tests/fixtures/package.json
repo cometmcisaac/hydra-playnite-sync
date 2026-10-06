@@ -1,0 +1,7 @@
+{
+  "name": "ldb-fixture",
+  "private": true,
+  "dependencies": {
+    "classic-level": "^2.0.0"
+  }
+}

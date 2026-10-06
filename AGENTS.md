@@ -22,20 +22,17 @@ dotnet build src/HydraSync/HydraSync.csproj -v q   # 0 errors AND 0 warnings is 
 `package.sh` is the only packaging path. It hardcodes the macOS `DOTNET_ROOT` and reads the
 version out of `extension.yaml`, so **bumping `extension.yaml` `Version:` is what names the package**.
 
-### Tests live OUTSIDE the repo
+### Tests live in the repo (`tests/`)
 
-84 checks in a separate net10 console harness:
-
-```
-/private/var/folders/mv/bp6yrdr91h30rmm_g38j575h0000gn/T/opencode/ldb-fixture/tests
-```
+84 checks in a net10 console harness (the shipped plugin targets net48, so the harness is net10):
 
 ```bash
-cd /private/var/folders/mv/bp6yrdr91h30rmm_g38j575h0000gn/T/opencode/ldb-fixture/tests && dotnet run
+dotnet run --project tests/hydrasync-tests.csproj   # must end with "RESULT: 84 passed, 0 failed"
 ```
 
+CI runs this as the **Run tests** step before Build, so a failing check blocks the release.
 Gotchas that will bite you:
-- The harness `.csproj` pulls production sources in by **absolute path** with
+- `tests/hydrasync-tests.csproj` pulls production sources in by **relative path** with
   `EnableDefaultCompileItems=false`. **Adding or renaming any testable source file means
   editing that csproj** or the new code silently isn't tested.
 - Only Playnite-independent files compile: `Hydra/*.cs`, `Sync/PlaytimeSyncLogic.cs`,
@@ -43,25 +40,33 @@ Gotchas that will bite you:
   `Achievements/SteamSchemaClient.cs`, `Update/UpdateChecker.cs`. `HydraSyncPlugin.cs`,
   `SyncEngine.cs` and `SyncState.cs` need the Playnite runtime → keep new decision logic in
   a pure static helper (see `PlaytimeSyncLogic`, `GameSyncModeLogic`) and add a harness
-  section for it. `PlayniteStubs.cs` supplies minimal `ILogger`/`LogManager`.
-- Fixture DB is produced by Node `classic-level` (forces real snappy-compressed `.ldb` +
-  WAL), mirroring Hydra's on-disk encoding.
+  section for it. `tests/PlayniteStubs.cs` supplies minimal `ILogger`/`LogManager`.
+- The LevelDB fixture DB is **committed** at `tests/fixtures/hydra-db-fixture` (binary
+  snappy-compressed data produced by Node `classic-level`, mirroring Hydra's on-disk
+  encoding). Regenerate with `cd tests/fixtures && npm i && node make-fixture.js`.
+- Fixtures are written under `%TEMP%/hydrasync-test-<guid>` only, so the harness is safe to
+  run from any working directory (it locates the repo root from `AppContext.BaseDirectory`).
 
 ## Ship it: releases are fully automated, the manifest is the gate
 
 ```bash
 # 1. bump Version: in src/HydraSync/extension.yaml   2. bump README version refs
 # 3. author .github/release-notes/vX.Y.Z.md from _template.md (CI uses it as the release body)
+rm -f dist/HydraSync-<old-version>.pext          # package.sh only removes the current version
+./scripts/package.sh
 git add -A && git commit -m "..." && git push origin main
-git tag vX.Y.Z && git push origin v1.9.0   # tag is the ONLY workflow trigger
-gh run watch $(gh run list --limit 1 --json databaseId -q '.[0].databaseId')
+git tag vX.Y.Z && git push origin vX.Y.Z          # tag is the ONLY workflow trigger
+gh run watch $(gh run list --limit 1 --json databaseId -q '.[0].databaseId') --exit-status
+gh release view vX.Y.Z                            # confirm the .pext asset exists
+git pull --rebase                                 # pick up CI's InstallerManifest commit
 ```
 
-CI (`.github/workflows/release.yml`, `windows-latest`) enforces **tag == manifest version**
-and then builds, packages, publishes the release, and commits the new entry into
-`InstallerManifest.yaml` on `main` — so after a tag push your local main is behind until you
-`git pull --rebase`. Don't hand-edit `InstallerManifest.yaml`. Missing release-notes file →
-CI warns and falls back to a generated body (it still releases).
+CI (`.github/workflows/release.yml`, `windows-latest`) runs the harness, enforces
+**tag == manifest version**, then builds, packages, publishes the release, and commits the
+new entry into `InstallerManifest.yaml` on `main` — which is why your local main is behind
+after a tag push until you `git pull --rebase`. Don't hand-edit `InstallerManifest.yaml`.
+Missing release-notes file → CI warns and falls back to a generated body (it still releases).
+Workflow changes only take effect on the next tag push — there is no PR CI.
 
 ## Manifest + packaging rules (Playnite rejects violations)
 
@@ -109,7 +114,24 @@ CI warns and falls back to a generated body (it still releases).
   to Playnite's official add-on database (currently not accepting new plugins); the in-app
   updater is the live mechanism.
 
+## Reference sources (not vendored, not in the repo)
+
+Most of this plugin's correctness comes from matching two external codebases exactly. Keep
+shallow clones around for greps instead of re-researching:
+
+```bash
+git clone --depth 1 https://github.com/JosefNemec/Playnite            # SDK + app internals
+git clone --depth 1 https://github.com/justin-delano/PlayniteAchievements   # PA import path
+```
+
+The questions they answer: Playnite — SDK signatures, extension discovery/installer rules,
+how settings views are filtered, what `Game`/`IItemCollection` allow. Playnite Achievements —
+the `achievement_cache` legacy import and its `GameAchievementData`/`AchievementDetail` schema.
+Local clones have been living in the macOS temp dir; **re-clone if they're gone**. Note
+`gh_grep` misses these repos — local `grep -rn` is faster and reliable.
+
 ## Other references
 
 - `README.md` — user-facing feature/how-it-works/test-checklist documentation.
+- `tests/` — harness (`Program.cs` sections 1-9), `PlayniteStubs.cs`, `fixtures/`.
 - `.github/release-notes/README.md` — how to cut a release, notes tone rules.

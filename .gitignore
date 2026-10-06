@@ -4,6 +4,9 @@ obj/
 dist/
 *.pext
 
+# Fixture generator deps (tests/fixtures/make-fixture.js needs `npm i classic-level`)
+node_modules/
+
 # IDE / OS
 .vs/
 *.user

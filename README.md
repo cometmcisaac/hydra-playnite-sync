@@ -193,9 +193,9 @@ git add -A && git commit -m "Release vX.Y.Z"
 git tag vX.Y.Z && git push origin main && git push origin vX.Y.Z
 ```
 
-CI (`windows-latest`) verifies the tag matches the manifest version, builds, packages the
-`.pext`, publishes the release with your notes, and records the release in
-`InstallerManifest.yaml`. See `.github/release-notes/README.md` for the full convention.
+CI (`windows-latest`) runs the test harness, verifies the tag matches the manifest version,
+builds, packages the `.pext`, publishes the release with your notes, and records the release
+in `InstallerManifest.yaml`. See `.github/release-notes/README.md` for the full convention.
 
 Layout:
 
@@ -209,11 +209,14 @@ src/HydraSync/
   Achievements/             # Steam schema client, PA cache writer
   Sync/                     # sync engine + persisted state
   Update/                   # GitHub release update checker
+tests/                      # net10 test harness + LevelDB fixture (run in CI before release)
 ```
 
 Unit/integration checks for the Hydra layer (LevelDB fixture + every achievement parser
-format + game-dir discovery) live in the dev harness used during development; the fixture
-DB is produced with Node `classic-level` to mirror Hydra's real on-disk encoding.
+format + game-dir discovery) live in `tests/` and run in CI before each release. The fixture
+DB is committed and was produced with Node `classic-level` to mirror Hydra's real on-disk
+encoding; regenerate it with `cd tests/fixtures && npm i && node make-fixture.js`. Run the
+same checks locally with `dotnet run --project tests/hydrasync-tests.csproj`.
 
 ## Troubleshooting achievements
 

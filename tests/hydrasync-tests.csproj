@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Test harness for the Playnite-independent parts of Hydra Sync.
+    Compiles production sources by relative path, so adding/renaming a testable file
+    means adding/renaming an entry below (there is no globbing on purpose).
+    Files that need the Playnite runtime (HydraSyncPlugin.cs, SyncEngine.cs, SyncState.cs)
+    cannot live here - keep new decision logic in a pure static helper instead.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- net10 so the harness runs on macOS/Linux CI; the shipped plugin targets net48. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>hydrasync-tests</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Production sources under test -->
+    <Compile Include="../src/HydraSync/Hydra/*.cs" />
+    <Compile Include="../src/HydraSync/Sync/PlaytimeSyncLogic.cs" />
+    <Compile Include="../src/HydraSync/Sync/GameSyncMode.cs" />
+    <Compile Include="../src/HydraSync/Achievements/LocalAchievementDefinitions.cs" />
+    <Compile Include="../src/HydraSync/Achievements/SteamSchemaClient.cs" />
+    <Compile Include="../src/HydraSync/Update/UpdateChecker.cs" />
+    <!-- Harness itself -->
+    <Compile Include="Program.cs" />
+    <Compile Include="PlayniteStubs.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="LevelDb.Managed" Version="1.1.0" />
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
+  </ItemGroup>
+
+</Project>
